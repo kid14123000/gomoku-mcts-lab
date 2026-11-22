@@ -2,7 +2,7 @@
 <html lang="zh">
 <head>
 <meta charset="utf-8">
-<title>MCTS Lab · Gomoku v24 it176</title>
+<title>Gomoku MCTS Lab · 决策过程可视化</title>
 <style>
   :root{
     --bg:#0b1220; --panel:#0f172a; --panel2:#111c33; --line:#26364f; --line2:#334155;
@@ -149,7 +149,7 @@
 <body>
 
 <header>
-  <h1>🔍 MCTS Lab <span style="color:var(--dim2);font-weight:400">decide → search</span></h1>
+  <h1>🔍 Gomoku MCTS Lab <span style="color:var(--dim2);font-weight:400">decide → search 过程</span></h1>
   <span class="tag">权重 <b id="hWeight">…</b></span>
   <span class="tag">设备 <b id="hDev">…</b></span>
   <span class="tag" id="hTime">–</span>
@@ -222,7 +222,7 @@
              style="width:56px" title="0 = argmax; 1 = 按访问比例采样"></label>
     </div>
     <details style="margin-top:6px">
-      <summary>MCTS 参数 (v24 训练配方)</summary>
+      <summary>MCTS 参数（训练侧配方）</summary>
       <div class="row" style="margin-top:6px">
         <label class="chk">c_init <input id="pCinit" type="number" value="1.25" step="0.05" style="width:64px"></label>
         <label class="chk">c_base <input id="pCbase" type="number" value="19652" step="100" style="width:74px"></label>
@@ -1540,7 +1540,7 @@ function clearAnswer() { S.answer = null; updatePosBar(); renderAll(); }
    全部从 sims 轨迹精确重建(不需要后端再跑):
      - 边的 n/q: 该 sim 走过这条边 → n+1, q 用 v[d] 更新
      - 父节点 ΣN: 该 sim 从父节点选了任何子 → +1
-     - PUCT = Q + coef·P,  coef 与 v24 同式;  P 取树里该边的先验
+     - PUCT = Q + coef·P,  coef 与被测实现同式;  P 取树里该边的先验
      - 排名: 同为该父节点下(被访问过的)兄弟按 PUCT 排序
    ══════════════════════════════════════════════════════════════════ */
 function edgePMap() {

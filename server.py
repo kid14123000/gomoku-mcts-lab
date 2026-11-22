@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Gomoku v24 MCTS Lab — decide→search 过程可视化后端
+"""Gomoku MCTS Lab — decide→search 过程可视化后端
 
 设计原则（唯一真相源）:
-  1. 直接 importlib 加载 Gomoku-v0_pt_v24.py **原文件**，不复制 search()/decide() 逻辑。
+  1. 直接 importlib 加载被追踪的训练脚本**原文件**，不复制 search()/decide() 逻辑。
   2. 只在外层包一个 traced wrapper：每次 agent.search(...) 调用时记录
      (深度, 落点, 返回的 v, 节点类型 leaf/node/terminal)，递归调用也走同一个 wrapper。
   3. decide() 本身原样执行（噪声注入 / sim 循环 / prob / 温度采样），所以我们看到的
