@@ -753,11 +753,88 @@ def s_train(t, fr):
         fr.txt(W / 2, 100, "每代都在搬这段距离，KL ≈ 0.49 ~ 1.41", 16, GREY,
                al * ease(seg(t, 6.8, 7.5)))
 
-# ── ⑬ 良性循环 ───────────────────────────────────────
+# ── ⑬ 两层循环：π 的更新路径 ─────────────────────────
+def s_twoloop(t, fr):
+    TOT = 18.0
+    al = fade(t, 0, 0.7) * (1 - ease(seg(t, TOT - 0.9, TOT)))
+    fr.txt(W / 2, 668, "⑬ 这一圈，分两层跑", 26, WHITE, al, weight="bold")
+
+    # 一句话机制
+    fr.txt(W / 2, 634, "目标不是「更正确的棋」，而是「这 800 次搜索自己得出的结论」", 18, ACCENT,
+           al * fade(t, 1.0, 1.8, 6.6, 7.4))
+
+    # 内层区域
+    gz = ease(seg(t, 0.3, 1.0)) * al
+    fr.rect(44, 140, 566, 440, "none", gz, ec="#3B82F6", lw=1.6, z=3)
+    fr.txt(60, 596, "内层 · 每手一次 · 约 6 秒", 15, "#60A5FA", gz, ha="left", weight="bold")
+    # 外层区域
+    fr.rect(670, 140, 566, 440, "none", gz, ec="#A78BFA", lw=1.6, z=3)
+    fr.txt(686, 596, "外层 · 每代一次 · 小时级", 15, "#A78BFA", gz, ha="left", weight="bold")
+
+    L = [("先验 P ← 网络前向", "一次前向，乘合法掩码归一化"),
+         ("800 次 PUCT：Q + coef·P", "coef 随父访问数变大"),
+         ("叶子：网络给一个 v", "终局则直接给 ±1"),
+         ("回溯：v 取反，Q 取均值", "N += 1，Q += (v − Q)/N"),
+         ("出口 π = N / ΣN", "原始访问分布 —— 温度不改它")]
+    for i, (t1, t2) in enumerate(L):
+        g = ease(seg(t, 0.6 + i * 0.28, 1.2 + i * 0.28)) * al
+        if g <= 0.02: continue
+        y = 512 - i * 88
+        fr.rect(60, y, 534, 62, "#0EA5E9", 0.07 * g, ec="#38BDF8", lw=1.2, z=4)
+        fr.txt(74, y + 40, t1, 17, "#BAE6FD", g, ha="left", weight="bold")
+        fr.txt(74, y + 18, t2, 13, GREY, g, ha="left")
+
+    R = [("落表：(局面, π, z)", "z 是整局结果，一局共用一个"),
+         ("池：最近 5 代", "每代约 1,993 条"),
+         ("32 步梯度 × 512 抽样", "1 步 ≈ 5 万次模拟"),
+         ("新权重 θ′", "下一代接着用")]
+    for i, (t1, t2) in enumerate(R):
+        g = ease(seg(t, 3.4 + i * 0.28, 4.0 + i * 0.28)) * al
+        if g <= 0.02: continue
+        y = 150 + i * 112
+        fr.rect(686, y, 534, 78, "#8B5CF6", 0.07 * g, ec="#A78BFA", lw=1.2, z=4)
+        fr.txt(700, y + 52, t1, 17, "#DDD6FE", g, ha="left", weight="bold")
+        fr.txt(700, y + 26, t2, 13, GREY, g, ha="left")
+
+    # 左列纵向箭头（每手往下走）
+    for i in range(len(L) - 1):
+        g = ease(seg(t, 1.2 + i * 0.28, 1.7 + i * 0.28)) * al
+        if g > 0.03:
+            fr.arrow(327, 512 - i * 88, 327, 512 - (i + 1) * 88 + 64, "#60A5FA", g * 0.9, 1.5)
+
+    # 右列纵向箭头（每代往上滚）
+    for i in range(len(R) - 1):
+        g = ease(seg(t, 4.0 + i * 0.28, 4.5 + i * 0.28)) * al
+        if g > 0.03:
+            fr.arrow(953, 150 + i * 112 + 80, 953, 150 + (i + 1) * 112 - 2, "#A78BFA", g * 0.9, 1.5)
+
+    # 箭头：出口 → 落表（下），新权重 → 先验（上）
+    ga = ease(seg(t, 6.0, 6.8)) * al
+    if ga > 0.03:
+        fr.arrow(600, 189, 682, 189, DANGER, ga, 2.2)
+        fr.txt(643, 208, "π 与 z", 11, DANGER, ga)
+    gb = ease(seg(t, 6.8, 7.6)) * al
+    if gb > 0.03:
+        fr.arrow(682, 526, 602, 543, DANGER, gb, 2.4)
+
+    if gb > 0.03:
+        fr.txt(643, 505, "新一代", 11, DANGER, gb)
+
+    # KL 目标
+    gf = ease(seg(t, 7.8, 8.8)) * al
+    if gf > 0.02:
+        fr.txt(W / 2, 108, "P(θk+1) = argminθ  E_s[ KL( π_search(s) ‖ softmax(f_θ(s)) ) ]",
+               20, ACCENT, gf)
+    gp = ease(seg(t, 12.0, 13.0)) * al
+    if gp > 0.02:
+        fr.txt(W / 2, 62, "目标距离 ≈ 1.1 nat，先验每代只挪 0.025 nat —— 这就是它要几百代的原因",
+               17, GREY, gp)
+
+# ── ⑭ 良性循环 ───────────────────────────────────────
 def s_loop(t, fr):
     TOT = 14.0
     al = fade(t, 0, 0.7) * (1 - ease(seg(t, TOT - 0.9, TOT)))
-    fr.txt(W / 2, 668, "⑬ 于是它开始滚雪球", 27, WHITE, al, weight="bold")
+    fr.txt(W / 2, 668, "⑭ 于是它开始滚雪球", 27, WHITE, al, weight="bold")
 
     cx, cy = W / 2, 380
     # 螺旋轨迹
@@ -957,7 +1034,8 @@ def s6(t, fr):
 
 SCENES = [(s1, 6.0), (s_human, 16.0), (s_boom, 10.0), (s_vs, 8.0), (s_phase, 14.0),
           (s_rollout, 12.0), (s_explore, 12.0), (s_net, 12.0), (s_walk, 58.0),
-          (s_tree, 12.0), (s_pick, 10.0), (s_selfplay, 11.0), (s_train, 10.0), (s_loop, 14.0)]
+          (s_tree, 12.0), (s_pick, 10.0), (s_selfplay, 11.0), (s_train, 10.0),
+          (s_twoloop, 18.0), (s_loop, 14.0)]
 
 def main():
     n = 0
