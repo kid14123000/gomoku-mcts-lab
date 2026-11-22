@@ -13,18 +13,31 @@
 lsof -tiTCP:5055 -sTCP:LISTEN | xargs kill     # 停
 ```
 
-`run.sh` 默认用训练项目的 venv 与权重，可用环境变量覆盖（换版本/换代就靠这个）：
+仓库是**自包含**的：`vendor/Gomoku-v0_pt_v24.py`（v24 训练脚本快照）+ `weights/weights_it176_v24.pt`（演示权重）
+都在库内，克隆下来找得到 python 环境就能跑，不需要另配路径。
+
+依赖：`flask` / `numpy` / `torch` / `gym` / `boardgame2`。
+`run.sh` 按 `$PY` → 仓库内 `.venv` → 本机训练 venv → `python3` 的顺序找解释器。
+
+要换权重/换版本（比如测 it200、或者换 v36 的网），用环境变量覆盖即可：
 
 ```bash
 PY=/path/to/venv/bin/python \
-V24_PY=/path/Gomoku-v0_pt_v24.py \
-V24_W=/path/weights_itXXX_v24.pt \
+V24_PY=/path/Gomoku-v0_pt_vXX.py \
+V24_W=/path/weights_itXXX_vXX.pt \
 LAB_PORT=5055 \
 ./run.sh
 ```
 
-依赖：`flask` / `numpy` / `torch` / `gym` / `boardgame2`（能跑 v24 训练的那个 venv 就够）。
-**权重与训练脚本不进本仓库**，路径通过上面两个变量指过去。
+### ⚠️ 关于库里的演示权重
+
+`weights/weights_it176_v24.pt` 是 **v24 训练到 it176 时的一副快照，仅作演示/复现界面行为用**：
+
+- **不代表项目最强水平**，也不保证棋力、不保证代表性与稳定性（那一代之后还在继续训练）
+- 用它复现出来的现象（含 value 头饱和、搜索散开）**是这副权重的真实行为**，不是 bug
+- 想复现自己的实验，请用 `V24_W` 指到你自己的权重
+- 文件 9.6 MB，`sha256 ed21329a…f0a67`（仅用于校验文件完整，**不用于判断权重同一性**——
+  权重同一性要比 tensor 值，不能比字节/md5）
 
 ## 页面怎么用
 
@@ -93,10 +106,12 @@ prob 最高值有 90 个并列 → τ=0 的 argmax 退化为"第一个并列点"
 ## 仓库结构
 
 ```
-server.py            # Flask 后端: 加载 v24 原模块 + 追踪器 + /api/analyze
-static/index.html    # 单页前端(棋盘/热力图/候选表/公式/模拟轴), 无外部依赖
-run.sh               # 一条命令启动(可用环境变量覆盖路径/端口)
-docs/                # 截图
+server.py                     # Flask 后端: 加载 v24 原模块 + 追踪器 + /api/analyze
+static/index.html             # 单页前端(棋盘/热力图/候选表/公式/模拟轴), 无外部依赖
+run.sh                        # 一条命令启动(自动找解释器, 可用环境变量覆盖)
+vendor/Gomoku-v0_pt_v24.py    # v24 训练脚本快照 —— 被追踪的就是它, 一行未改
+weights/weights_it176_v24.pt  # 演示权重(见上面 ⚠️ 说明)
+docs/                         # 截图
 ```
 
 接口：

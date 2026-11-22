@@ -30,8 +30,15 @@ import gym
 from flask import Flask, jsonify, request, send_file
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-V24_PY = os.environ.get('V24_PY', '/Users/kid/AlphaZero_Gomoku_15x15_v24/Gomoku-v0_pt_v24.py')
-V24_W = os.environ.get('V24_W', '/Users/kid/AlphaZero_Gomoku_15x15_v24/gomoku_checkpoints_v24/weights_it176_v24.pt')
+
+# 优先用仓库自带副本(克隆即可跑); 找不到再回落到本机训练目录
+_HERE_PY = os.path.join(HERE, 'vendor', 'Gomoku-v0_pt_v24.py')
+_HERE_W = os.path.join(HERE, 'weights', 'weights_it176_v24.pt')
+_TRAIN_PY = '/Users/kid/AlphaZero_Gomoku_15x15_v24/Gomoku-v0_pt_v24.py'
+_TRAIN_W = '/Users/kid/AlphaZero_Gomoku_15x15_v24/gomoku_checkpoints_v24/weights_it176_v24.pt'
+
+V24_PY = os.environ.get('V24_PY') or (_HERE_PY if os.path.exists(_HERE_PY) else _TRAIN_PY)
+V24_W = os.environ.get('V24_W') or (_HERE_W if os.path.exists(_HERE_W) else _TRAIN_W)
 PORT = int(os.environ.get('LAB_PORT', '5055'))
 N = 15
 

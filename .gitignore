@@ -4,11 +4,12 @@ lab.log
 __pycache__/
 *.py[cod]
 
-# 权重 / 数据一律不进库(体积大且属于训练目录)
+# 权重 / 数据默认不进库; 只放行 demo 用那一副
 *.pt
 *.pth
 *.pkl
 *.npz
+!weights/weights_it176_v24.pt
 
 # 系统
 .DS_Store
