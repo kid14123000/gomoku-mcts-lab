@@ -89,6 +89,18 @@
   .tb rect{stroke:#0b1220;stroke-width:.5;cursor:pointer}
   .tb rect:hover{stroke:#fff;stroke-width:1.2}
   .tb text{font-size:9px;fill:#e2e8f0;pointer-events:none;font-family:ui-monospace,monospace}
+  .prow{display:grid;grid-template-columns:150px 1fr;gap:8px;align-items:center;
+        padding:6px 0;border-top:1px solid #16233c}
+  .prow:first-child{border-top:none}
+  .plab{font-size:11.5px;line-height:1.6}
+  .plab .nm{color:var(--amber);font-weight:700;font-size:13px}
+  .plab .st{color:var(--dim2);font-variant-numeric:tabular-nums}
+  .pcharts{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+  .pch{position:relative}
+  .pch .t{font-size:9.5px;color:var(--dim2);margin-bottom:1px}
+  .pch svg{display:block;width:100%;height:62px;background:#0a101c;border:1px solid #16233c;border-radius:5px}
+  .pch .v{font-size:10px;color:var(--dim);font-variant-numeric:tabular-nums}
+  .pcursor{stroke:#f59e0b;stroke-width:1;stroke-dasharray:2 2;pointer-events:none}
   .fml{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11.5px;line-height:1.85;
        color:#cbd5e1;background:#0a101c;border:1px solid #1b2740;border-radius:8px;padding:8px 10px;
        white-space:pre-wrap;word-break:break-word}
@@ -323,6 +335,16 @@
     <svg id="treeSvg" height="120" style="display:block"></svg>
   </div>
   <div id="treeTip" style="font-size:11px;color:var(--dim);min-height:16px;margin-top:5px">–</div>
+</section>
+
+<section class="card" style="margin:0 16px 10px" id="pathCard">
+  <h2>路径曲线 <span class="hint">点「搜索树」里任意节点 → 这条路径每一层随模拟次数(t)的变化</span></h2>
+  <div class="row" style="margin:-2px 0 8px">
+    <span id="pathHead" style="font-size:11px;color:var(--dim2)">还没选路径：在下面的搜索树里点一个节点</span>
+    <span class="spacer"></span>
+    <label class="chk"><input type="checkbox" id="curveLog" onchange="renderPathCurves()"> N 用对数轴</label>
+  </div>
+  <div id="pathBody"></div>
 </section>
 
 <footer class="scrub">
@@ -1512,6 +1534,223 @@ function updatePosBar() {
 }
 function clearAnswer() { S.answer = null; updatePosBar(); renderAll(); }
 
+
+/* ══════════════════════════════════════════════════════════════════
+   路径曲线: 一条路径上每层统计随模拟次数 t 的演化
+   全部从 sims 轨迹精确重建(不需要后端再跑):
+     - 边的 n/q: 该 sim 走过这条边 → n+1, q 用 v[d] 更新
+     - 父节点 ΣN: 该 sim 从父节点选了任何子 → +1
+     - PUCT = Q + coef·P,  coef 与 v24 同式;  P 取树里该边的先验
+     - 排名: 同为该父节点下(被访问过的)兄弟按 PUCT 排序
+   ══════════════════════════════════════════════════════════════════ */
+function edgePMap() {
+  // "父路径|r,c" -> 该边的先验 P
+  const m = new Map();
+  (S.D.tree || []).forEach(nd => {
+    const pp = nd.p.join(',');
+    (nd.e || []).forEach(e => m.set(pp + '|' + e[0] + ',' + e[1], e[4]));
+  });
+  return m;
+}
+
+function buildPathSeries(flat) {
+  const D = S.D, sims = D.sims, L = flat.length / 2, T = sims.length;
+  if (!L || !T) return null;
+  const c = D.c;
+  const tg = [];
+  for (let d = 0; d < L; d++) tg.push([flat[2 * d], flat[2 * d + 1]]);
+
+  // 每层的兄弟(父节点下的所有已访问子), 用于排名
+  const sibActs = [], sibN = [], sibS = [];
+  for (let d = 0; d < L; d++) {
+    const pp = flat.slice(0, 2 * d).join(',');
+    const node = (D.tree || []).find(t => t.p.join(',') === pp);
+    const acts = (node && node.e ? node.e : []).map(e => [e[0], e[1]]);
+    sibActs.push(acts.length ? acts : [tg[d]]);
+    sibN.push(new Map(sibActs[d].map(a => [a.join(','), 0])));
+    sibS.push(new Map(sibActs[d].map(a => [a.join(','), 0])));
+  }
+  const pmap = edgePMap();
+  const Pof = (d, a) => {
+    const pp = flat.slice(0, 2 * d).join(',');
+    const v = pmap.get(pp + '|' + a.join(','));
+    return v === undefined ? 0 : v;
+  };
+
+  const out = tg.map((a, d) => ({
+    d, a, label: coord(a[0], a[1]), P: Pof(d, a),
+    n: [0], q: [null], puct: [null], rank: [null], sumN: [0], visits: [],
+  }));
+  const nCur = new Array(L).fill(0), sCur = new Array(L).fill(0), sumCur = new Array(L).fill(0);
+  const coefOf = (sumN, n) => sumN > 0
+    ? (c.c_init + Math.log1p((1 + sumN) / c.c_base)) * Math.sqrt(sumN) / (1 + n) : 0;
+
+  for (let i = 0; i < T; i++) {
+    const sm = sims[i], a = sm.a, v = sm.v;
+    let m = 0;
+    while (m < a.length && m < L && a[m][0] === tg[m][0] && a[m][1] === tg[m][1]) m++;
+    // 目标边: 前 m 条被这次模拟走过
+    for (let d = 0; d < m; d++) { nCur[d]++; sCur[d] += v[d]; out[d].visits.push(i + 1); }
+    // 父节点 ΣN 与兄弟计数: d <= m 且这次确实选了子
+    for (let d = 0; d <= Math.min(m, L - 1); d++) {
+      if (d >= a.length) break;
+      sumCur[d]++;
+      const key = a[d].join(',');
+      if (sibN[d].has(key)) { sibN[d].set(key, sibN[d].get(key) + 1); sibS[d].set(key, sibS[d].get(key) + v[d]); }
+    }
+    // 快照
+    for (let d = 0; d < L; d++) {
+      const n = nCur[d], sumN = sumCur[d];
+      out[d].n.push(n); out[d].sumN.push(sumN);
+      const q = n > 0 ? sCur[d] / n : null;
+      out[d].q.push(q);
+      const pu = q === null ? null : q + coefOf(sumN, n) * out[d].P;
+      out[d].puct.push(pu);
+      // 排名: 同父下被访问过的兄弟里比它大的有几个
+      let rank = null;
+      if (pu !== null) {
+        rank = 1;
+        const me = tg[d].join(',');
+        sibN[d].forEach((sn, k) => {
+          if (k === me || sn <= 0) return;
+          const sq = sibS[d].get(k) / sn;
+          const sPu = sq + coefOf(sumN, sn) * Pof(d, k.split(',').map(Number));
+          if (sPu > pu) rank++;
+        });
+      }
+      out[d].rank.push(rank);
+    }
+  }
+  return { L, T, rows: out };
+}
+
+function sparkline(vals, opts) {
+  const { w = 300, h = 62, color = '#38bdf8', fill, yMin, yMax, log = false, rug = null, T = 1,
+          step = false, invert = false } = opts;
+  const pad = 3;
+  const ys = vals.map((v, i) => v === null ? null : (log ? Math.log1p(Math.max(0, v)) : v));
+  const s = ys.filter(v => v !== null);
+  let lo = (yMin === undefined) ? (s.length ? Math.min(...s) : 0) : yMin;
+  let hi = (yMax === undefined) ? (s.length ? Math.max(...s) : 1) : yMax;
+  if (!(hi > lo)) { lo -= 0.5; hi += 0.5; }
+  const X = i => pad + (i / Math.max(1, T - 1)) * (w - 2 * pad);
+  const Y = v => invert
+    ? pad + ((v - lo) / (hi - lo)) * (h - 2 * pad)
+    : h - pad - ((v - lo) / (hi - lo)) * (h - 2 * pad);
+  let path = '', started = false, prevY = null;
+  vals.forEach((v, i) => {
+    if (v === null) { started = false; return; }
+    const x = X(i), y = Y(ys[i]);
+    if (!started) path += 'M' + x.toFixed(1) + ',' + y.toFixed(1) + ' ';
+    else if (step) path += 'H' + x.toFixed(1) + 'V' + y.toFixed(1) + ' ';   // 阶梯: 排名这类整数指标
+    else path += 'L' + x.toFixed(1) + ',' + y.toFixed(1) + ' ';
+    started = true; prevY = y;
+  });
+  let rugSvg = '';
+  if (rug && rug.length) {
+    rugSvg = rug.map(t => {
+      const x = X(t).toFixed(1);
+      return `<line x1="${x}" y1="${h - 3}" x2="${x}" y2="${h - 8}" stroke="#f59e0b" stroke-width=".8" opacity=".55"/>`;
+    }).join('');
+  }
+  const zero = (lo < 0 && hi > 0) ? `<line x1="0" y1="${Y(0).toFixed(1)}" x2="${w}" y2="${Y(0).toFixed(1)}" stroke="#334155" stroke-dasharray="2 2"/>` : '';
+  return `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">${zero}
+    ${fill ? `<path d="${path}L${X(T - 1)},${h - pad} L${X(0)},${h - pad} Z" fill="${fill}" opacity=".14"/>` : ''}
+    <path d="${path}" fill="none" stroke="${color}" stroke-width="1.6" stroke-linejoin="round"/>
+    ${rugSvg}<g class="cur"></g></svg>`;
+}
+
+function renderPathCurves() {
+  const body = $('pathBody');
+  if (!S.D || !S.D.sims || !S.D.sims.length) {
+    body.innerHTML = ''; $('pathHead').textContent = '先分析一个局面'; return;
+  }
+  const flat = S.node ? S.node.path : (S.curvePath || []);
+  if (!flat || !flat.length) {
+    body.innerHTML = '<div style="color:var(--dim2);font-size:12px;padding:6px 0">' +
+      '在下面的「搜索树」里点任意节点 → 自动画出 根→该节点 这条路径上每一层的曲线。' +
+      '（点根节点则没有路径）</div>';
+    $('pathHead').textContent = '未选路径';
+    return;
+  }
+  const key = flat.join(',') + '|' + S.D.sims.length;
+  if (S._curveKey !== key) { S._curve = buildPathSeries(flat); S._curveKey = key; }
+  const C = S._curve;
+  if (!C) { body.innerHTML = ''; return; }
+
+  const useLog = $('curveLog') && $('curveLog').checked;
+  const parts = [];
+  for (let i = 0; i < flat.length; i += 2) parts.push(coord(flat[i], flat[i + 1]));
+  $('pathHead').innerHTML = `路径 <b style="color:var(--amber)">根 → ${parts.join(' → ')}</b> · ` +
+    `${C.L} 层 · ${C.T} 次模拟 · 竖刻度=该次模拟走过这个点`;
+
+  body.innerHTML = C.rows.map(r => {
+    const fin = (arr) => { for (let i = arr.length - 1; i >= 0; i--) if (arr[i] !== null) return arr[i]; return null; };
+    const nf = fin(r.n), qf = fin(r.q), uf = fin(r.puct), rf = fin(r.rank);
+    // 排名分布: 各档占比(前两档) —— 密集阶梯图靠这个才读得出"大多数时间第几"
+    const hist = {};
+    r.rank.forEach(v => { if (v !== null) hist[v] = (hist[v] || 0) + 1; });
+    const tot = Object.values(hist).reduce((a, b) => a + b, 0) || 1;
+    const top2 = Object.entries(hist).sort((a, b) => b[1] - a[1]).slice(0, 2)
+      .map(([k, v]) => `第${k} ${(v / tot * 100).toFixed(0)}%`).join(' · ');
+    return `<div class="prow" data-d="${r.d}">
+      <div class="plab">
+        <div>第 ${r.d + 1} 层 <span class="nm">${r.label}</span></div>
+        <div class="st">P=${r.P.toFixed(4)}</div>
+        <div class="st">终态 N=${nf} · Q=${qf === null ? '–' : qf.toFixed(3)}</div>
+        <div class="st">PUCT=${uf === null ? '–' : uf.toFixed(3)} · 排名 ${rf === null ? '–' : rf}</div>
+        <div class="st" style="color:#c4b5fd">${top2 || ''}</div>
+      </div>
+      <div class="pcharts">
+        <div class="pch"><div class="t">N(t) 访问次数</div>
+          ${sparkline(r.n, { color: '#38bdf8', fill: '#38bdf8', yMin: 0, log: useLog, rug: r.visits, T: C.T })}
+          <div class="v" id="vN${r.d}">终 ${nf}</div></div>
+        <div class="pch"><div class="t">Q(t) 行动价值</div>
+          ${sparkline(r.q, { color: '#f59e0b', yMin: -1, yMax: 1, rug: r.visits, T: C.T })}
+          <div class="v" id="vQ${r.d}">终 ${qf === null ? '–' : qf.toFixed(3)}</div></div>
+        <div class="pch"><div class="t">PUCT(t) 竞争力</div>
+          ${sparkline(r.puct, { color: '#34d399', rug: r.visits, T: C.T })}
+          <div class="v" id="vU${r.d}">终 ${uf === null ? '–' : uf.toFixed(3)}</div></div>
+        <div class="pch"><div class="t">排名(t) 同层第几（↑=更好）</div>
+          ${sparkline(r.rank, { color: '#a78bfa', yMin: 1, yMax: Math.max(2, ...r.rank.filter(x => x !== null)),
+                                rug: r.visits, T: C.T, step: true, invert: true })}
+          <div class="v" id="vR${r.d}">终 ${rf === null ? '–' : rf}</div></div>
+      </div></div>`;
+  }).join('');
+
+  bindCurveHover(C);
+}
+
+function bindCurveHover(C) {
+  document.querySelectorAll('#pathBody .pch').forEach(ch => {
+    ch.onmousemove = ev => {
+      const svg = ch.querySelector('svg');
+      const rect = svg.getBoundingClientRect();
+      const frac = Math.max(0, Math.min(1, (ev.clientX - rect.left) / rect.width));
+      const t = Math.round(frac * (C.T - 1));
+      const d = parseInt(ch.closest('.prow').dataset.d, 10);
+      const r = C.rows[d];
+      // 所有行的光标一起走(方便横向对比)
+      document.querySelectorAll('#pathBody .prow').forEach(row => {
+        const dd = parseInt(row.dataset.d, 10);
+        row.querySelectorAll('svg > g.cur').forEach(g => {
+          g.innerHTML = `<line class="pcursor" x1="${(3 + frac * (300 - 6)).toFixed(1)}" y1="0"
+            x2="${(3 + frac * (300 - 6)).toFixed(1)}" y2="62"/>`;
+        });
+        const rr = C.rows[dd];
+        const f = a => { const v = a[Math.min(t + 1, a.length - 1)]; return v === null ? '–' : v; };
+        $('vN' + dd).textContent = `t=${t + 1} N=${f(rr.n)}`;
+        $('vQ' + dd).textContent = `Q=${typeof f(rr.q) === 'number' ? f(rr.q).toFixed(3) : '–'}`;
+        $('vU' + dd).textContent = `PUCT=${typeof f(rr.puct) === 'number' ? f(rr.puct).toFixed(3) : '–'}`;
+        $('vR' + dd).textContent = `排名=${f(rr.rank)}`;
+      });
+    };
+  });
+  document.querySelectorAll('#pathBody .pch').forEach(ch => {
+    ch.onmouseleave = () => { renderPathCurves(); };
+  });
+}
+
 /* 曲线: ΣN 随模拟 */
 function drawCurve() {
   const cv = $('curve'); if (!cv) return;
@@ -1544,7 +1783,8 @@ function drawCurve() {
    ══════════════════════════════════════════════════════════════════ */
 function renderAll() {
   drawMain(); drawMini('cPolicy', 'policy'); drawMini('cVisit', 'visits'); drawMini('cQ', 'q');
-  renderCand(); renderFormula(); renderSim(); renderObs(); renderOut(); drawCurve(); renderTree(); updatePosBar();
+  renderCand(); renderFormula(); renderSim(); renderObs(); renderOut(); drawCurve(); renderTree();
+  renderPathCurves(); updatePosBar();
   if (zoomOn) drawZoom(S.zoomKind || 'policy');
   if (S.node) {
     $('kLabel').textContent = '节点视图（不可回放）';
@@ -1650,7 +1890,7 @@ async function analyze(silent) {
     const r = await fetch('/api/analyze', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     const D = await r.json();
     if (!D.ok) { msg(D.error || '分析失败'); return; }
-    S.D = D; S.k = D.sims.length; S.tau = body.tau; S.frame = null;
+    S.D = D; S.k = D.sims.length; S.tau = body.tau; S.frame = null; S._curveKey = null;
     S.node = null; S.nodeStones = null; updateNodeBar();
     if (!S.sel || S.stones.some(s => s.r === S.sel[0] && s.c === S.sel[1])) S.sel = D.chosen;
     $('hTime').innerHTML = `${D.ms} ms · ${D.ms_per_sim} ms/sim`;
