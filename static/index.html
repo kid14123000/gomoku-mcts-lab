@@ -69,6 +69,15 @@
   tbody tr.just{background:#3b2a12;box-shadow:inset 0 0 0 1px #b45309}
   tbody tr.just td.co{color:var(--amber)}
   .dq{font-size:9.5px;margin-left:3px}
+  .nodebar{display:none;align-items:center;gap:8px;margin:0 16px 8px;padding:5px 10px;border-radius:8px;
+           background:#1a2b1f;border:1px solid #2f6e46;color:#a7f3d0;font-size:12px}
+  .nodebar.on{display:flex}
+  .nodebar b{color:#6ee7b7}
+  .nodebar button{background:#0f3b2c;border-color:#2f6e46;color:#d1fae5;font-size:11px;padding:2px 8px}
+  .tb{border:none;padding:0}
+  .tb rect{stroke:#0b1220;stroke-width:.5;cursor:pointer}
+  .tb rect:hover{stroke:#fff;stroke-width:1.2}
+  .tb text{font-size:9px;fill:#e2e8f0;pointer-events:none;font-family:ui-monospace,monospace}
   .fml{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11.5px;line-height:1.85;
        color:#cbd5e1;background:#0a101c;border:1px solid #1b2740;border-radius:8px;padding:8px 10px;
        white-space:pre-wrap;word-break:break-word}
@@ -126,6 +135,12 @@
 </header>
 
 <div id="msg"></div>
+<div class="nodebar" id="nodebar">
+  <span>🔍 正在看树节点 <b id="nbPath">–</b></span>
+  <span style="color:var(--dim)">N=<b id="nbN">–</b> · 深度 <b id="nbD">–</b> · 这是该节点自己的 225 个候选（静态终态，不能用模拟轴回放）</span>
+  <span class="spacer"></span>
+  <button onclick="focusNode([])">回到根</button>
+</div>
 
 <div class="grid">
   <!-- ── 左: 主棋盘 ── -->
@@ -213,6 +228,9 @@
 
     <div class="card">
       <h2>本次模拟 <span class="hint" id="simTitle">拖动底部滑杆</span></h2>
+      <div style="font-size:10.5px;color:var(--dim2);margin:-4px 0 6px">
+        这只是<b>一条</b>路径；50 次模拟合起来的那棵树在页面下方「搜索树」，可点任意节点当根
+      </div>
       <div class="chips" id="simPath" style="min-height:22px"></div>
       <div class="kv" id="simKv" style="margin-top:8px"></div>
     </div>
@@ -262,6 +280,20 @@
   </section>
 </div>
 
+<section class="card" style="margin:0 16px 10px">
+  <h2>搜索树 <span class="hint">行=层数 · 块宽 ∝ 进入次数 N · 颜色=Q · 点任意块 = 以它为根看它自己的候选</span></h2>
+  <div class="row" style="margin:-2px 0 6px">
+    <span id="treeStat" style="font-size:11px;color:var(--dim2)"></span>
+    <span class="spacer"></span>
+    <label class="chk"><input type="checkbox" id="treeN2" checked onchange="renderTree()"> 只标 N≥2 的块</label>
+    <button class="mini2" onclick="focusNode([])" title="回到根局面">回到根</button>
+  </div>
+  <div id="treeWrap" style="overflow-x:auto;overflow-y:hidden">
+    <svg id="treeSvg" height="120" style="display:block"></svg>
+  </div>
+  <div id="treeTip" style="font-size:11px;color:var(--dim);min-height:16px;margin-top:5px">–</div>
+</section>
+
 <footer class="scrub">
   <div class="row">
     <button onclick="stepK(-1)">◀</button>
@@ -294,6 +326,10 @@ const S = {
 };
 
 const $ = id => document.getElementById(id);
+
+// 当前视图数据源: 根局面(S.D) 或 树节点(S.node)。节点视图是静态终态, 没有逐次模拟轨迹。
+const polArr = () => S.node ? S.node.policy : (S.D ? S.D.policy_now : null);
+const viewStones = () => S.node ? S.nodeStones : S.stones;
 const coord = (r, c) => LETTERS[c] + (N - r);
 const msg = t => { const m = $('msg'); m.textContent = t; m.style.display = t ? 'block' : 'none'; };
 
@@ -347,7 +383,7 @@ function heatColor(t) {
   return `rgba(${a.map((x, i) => Math.round(x + (b[i] - x) * t)).join(',')},${0.20 + 0.70 * t})`;
 }
 // 归一化后低于该值就不画: 否则整盘都是暗圈, 看着像"泥"
-const HEAT_FLOOR = 0.02;
+const HEAT_FLOOR = 0.05;
 function qColor(q) {
   const t = Math.max(-1, Math.min(1, q)), m = Math.abs(t);
   return t >= 0 ? `rgba(52,211,153,${0.1 + 0.65 * m})` : `rgba(248,113,113,${0.1 + 0.65 * m})`;
@@ -356,6 +392,16 @@ function qColor(q) {
 /* ── 状态重放: 第 k 次模拟后的根节点 ───────────────────────────── */
 function stateAt(k) {
   const D = S.D;
+  // 节点视图: 直接读该节点的终态数组(不可按 k 回放)
+  if (S.node) {
+    const nT = Float32Array.from(S.node.count), q = Float32Array.from(S.node.q);
+    const sumN = S.node.n_total || 0;
+    const c = D.c;
+    return { k: 0, cnt: sumN, sumN, nT, q, dN: new Float32Array(225), dV: new Float32Array(225),
+             dC: new Int32Array(225),
+             coefBase: (c.c_init + Math.log1p((1 + sumN) / c.c_base)) * Math.sqrt(Math.max(sumN, 0)),
+             satur: 0, depthSum: 0, term: 0 };
+  }
   const dN = new Float32Array(225), dV = new Float32Array(225), dC = new Int32Array(225);
   let cnt = 0, satur = 0, depthSum = 0, term = 0;
   for (let i = 0; i < k; i++) {
@@ -393,14 +439,14 @@ function drawMain() {
     let mx = 0;
     for (let i = 0; i < 225; i++) {
       const r = (i / N) | 0, c = i % N;
-      if (S.stones.some(s => s.r === r && s.c === c)) continue;
+      if (viewStones().some(s => s.r === r && s.c === c)) continue;
       let v = null;
-      if (S.layer === 'policy') v = S.D.policy_now[i];
+      if (S.layer === 'policy') v = polArr()[i];
       else if (S.layer === 'visits') v = st.nT[i];
       else if (S.layer === 'q') v = st.nT[i] > 0 ? st.q[i] : null;
       else if (S.layer === 'puct') {
         const coef = st.sumN > 0 ? st.coefBase / (1 + st.nT[i]) : 0;
-        v = st.q[i] + coef * S.D.policy_now[i];
+        v = st.q[i] + coef * polArr()[i];
       }
       if (v === null) continue;
       vals[i] = v;
@@ -419,7 +465,7 @@ function drawMain() {
     }
     // 数值标注 (前 6)
     const order = Array.from({ length: 225 }, (_, i) => i)
-      .filter(i => { const r = (i / N) | 0, c = i % N; return !S.stones.some(s => s.r === r && s.c === c); })
+      .filter(i => { const r = (i / N) | 0, c = i % N; return !viewStones().some(s => s.r === r && s.c === c); })
       .sort((a, b) => (S.layer === 'q' ? Math.abs(st.q[b]) : vals[b]) - (S.layer === 'q' ? Math.abs(st.q[a]) : vals[a]));
     ctx.font = 'bold 9px ui-monospace,monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     const placed = [];   // 已放置的标签位置, 防重叠(相邻/对角会挤成一坨)
@@ -446,10 +492,10 @@ function drawMain() {
   }
 
   // 棋子
-  for (const s of S.stones) stone(ctx, SP + s.c * SC, SP + s.r * SC, SC * .43, s.v, s.n);
+  for (const s of viewStones()) stone(ctx, SP + s.c * SC, SP + s.r * SC, SC * .43, s.v, s.n);
 
   // 最后一路径高亮
-  if (st && S.k > 0 && S.k <= S.D.sims.length) {
+  if (!S.node && st && S.k > 0 && S.k <= S.D.sims.length) {
     const sm = S.D.sims[S.k - 1];
     if (sm.a.length) {
       ctx.strokeStyle = 'rgba(245,158,11,.95)'; ctx.lineWidth = 2.2;
@@ -457,8 +503,8 @@ function drawMain() {
       ctx.beginPath(); ctx.arc(SP + c0 * SC, SP + r0 * SC, SC * .5, 0, 7); ctx.stroke();
     }
   }
-  // chosen
-  if (S.D && S.D.chosen) {
+  // chosen (只在根视图显示)
+  if (S.D && S.D.chosen && !S.node) {
     const [r, c] = S.D.chosen;
     ctx.strokeStyle = '#34d399'; ctx.lineWidth = 2.4; ctx.setLineDash([4, 3]);
     ctx.beginPath(); ctx.arc(SP + c * SC, SP + r * SC, SC * .52, 0, 7); ctx.stroke();
@@ -496,16 +542,16 @@ function drawMini(id, kind) {
   const st = S.D ? stateAt(S.k) : null;
   let mx = 0;
   for (let i = 0; i < 225; i++) {
-    const v = kind === 'policy' ? (S.D ? S.D.policy_now[i] : 0)
+    const v = kind === 'policy' ? (S.D ? polArr()[i] : 0)
       : kind === 'visits' ? (st ? st.nT[i] : 0) : (st && st.nT[i] > 0 ? Math.abs(st.q[i]) : 0);
     mx = Math.max(mx, v);
   }
   if (S.D) {
     for (let i = 0; i < 225; i++) {
       const r = (i / N) | 0, c = i % N;
-      if (S.stones.some(s => s.r === r && s.c === c)) continue;
+      if (viewStones().some(s => s.r === r && s.c === c)) continue;
       let col = null;
-      const nt = mx > 0 ? (kind === 'policy' ? S.D.policy_now[i] : st.nT[i]) / mx : 0;
+      const nt = mx > 0 ? (kind === 'policy' ? polArr()[i] : st.nT[i]) / mx : 0;
       if (kind === 'policy') { if (nt >= HEAT_FLOOR) col = heatColor(nt); }
       else if (kind === 'visits') { if (st.nT[i] > 0 && nt >= HEAT_FLOOR) col = heatColor(nt); }
       else { if (st.nT[i] > 0) col = qColor(st.q[i]); }
@@ -514,7 +560,7 @@ function drawMini(id, kind) {
       ctx.fillRect(sp + c * sc - sc * .42, sp + r * sc - sc * .42, sc * .84, sc * .84);
     }
   }
-  for (const s of S.stones) {
+  for (const s of viewStones()) {
     ctx.beginPath(); ctx.arc(sp + s.c * sc, sp + s.r * sc, sc * .38, 0, 7);
     ctx.fillStyle = s.v === 1 ? '#111' : '#f1f5f9'; ctx.fill();
     ctx.strokeStyle = '#334155'; ctx.lineWidth = .6; ctx.stroke();
@@ -526,7 +572,7 @@ function drawMini(id, kind) {
   // 文案
   if (!S.D) { $('tPolicy').textContent = $('tVisit').textContent = $('tQ').textContent = '–'; return; }
   if (kind === 'policy') {
-    const p = S.D.policy_now;
+    const p = polArr();
     const ent = -p.reduce((a, x) => a + (x > 0 ? x * Math.log(x) : 0), 0);
     $('tPolicy').textContent = `max ${Math.max(...p).toFixed(3)} · 熵 ${ent.toFixed(2)}`;
   } else if (kind === 'visits') {
@@ -541,11 +587,11 @@ function drawMini(id, kind) {
    候选表
    ══════════════════════════════════════════════════════════════════ */
 function candList(k) {
-  const st = stateAt(k), out = [];
+  const st = stateAt(k), out = [], P = polArr(), VS = viewStones();
   for (let i = 0; i < 225; i++) {
     const r = (i / N) | 0, c = i % N;
-    if (S.stones.some(s => s.r === r && s.c === c)) continue;
-    const p = S.D.policy_now[i], n = st.nT[i], q = st.q[i];
+    if (VS.some(s => s.r === r && s.c === c)) continue;
+    const p = P[i], n = st.nT[i], q = st.q[i];
     const coef = st.sumN > 0 ? st.coefBase / (1 + n) : 0;
     const u = coef * p;
     out.push({ r, c, i, p, n, q, u, ub: q + u });
@@ -575,8 +621,8 @@ function toggleSort(k, add) {
 function renderCand() {
   if (!S.D) { $('candBody').innerHTML = ''; $('sortChain').textContent = ''; return; }
   const st = stateAt(S.k);
-  const prv = S.k > 0 ? stateAt(S.k - 1) : null;
-  const a0 = S.k > 0 ? S.D.sims[S.k - 1].a[0] : null;
+  const prv = (!S.node && S.k > 0) ? stateAt(S.k - 1) : null;
+  const a0 = (!S.node && S.k > 0 && S.D.sims[S.k - 1]) ? S.D.sims[S.k - 1].a[0] : null;
   const justIdx = a0 ? a0[0] * N + a0[1] : -1;      // 本次模拟刚被访问的点
 
   const wrapEl = document.querySelector('.candwrap');
@@ -653,11 +699,11 @@ function renderFormula() {
   const p = D.policy_now[i], n = st.nT[i], q = st.q[i];
   const coef = st.sumN > 0 ? st.coefBase / (1 + n) : 0;
   const u = coef * p, ub = q + u;
-  const pre = D.count_pre[i] || 0;
+  const pre = S.node ? 0 : (D.count_pre[i] || 0);
 
   // 这条边最近一次被访问
   let last = null;
-  for (let t = 0; t < S.k; t++) {
+  for (let t = 0; !S.node && t < S.k; t++) {
     const a = D.sims[t].a[0];
     if (a && a[0] === r && a[1] === c) last = { t, v: D.sims[t].v[0], leaf: D.sims[t].leaf_v };
   }
@@ -711,6 +757,13 @@ function renderFormula() {
    ══════════════════════════════════════════════════════════════════ */
 function renderSim() {
   const box = $('simPath'), kv = $('simKv');
+  if (S.node) {
+    box.innerHTML = '<span style="color:var(--dim2)">节点视图：这里显示的是该节点的搜索终态，没有逐次模拟轨迹可回放。' +
+      '回到根局面才可按模拟轴回放。</span>';
+    kv.innerHTML = `<div>节点</div><div>${coord(S.node.path[0] ?? 0, S.node.path[1] ?? 0)}</div>`;
+    $('simTitle').textContent = '节点视图';
+    return;
+  }
   if (!S.D || S.k === 0) { box.innerHTML = '<span style="color:var(--dim2)">k=0: 搜索尚未开始</span>'; kv.innerHTML = ''; return; }
   const sm = S.D.sims[S.k - 1];
   const chips = ['<span class="chip">根</span>'];
@@ -736,6 +789,24 @@ function renderSim() {
 
 function renderObs() {
   if (!S.D) { $('obs').textContent = '–'; return; }
+  if (S.node) {
+    const P = polArr(), Q = S.node.q, CN = S.node.count;
+    const ent = -P.reduce((a, x) => a + (x > 0 ? x * Math.log(x) : 0), 0);
+    const legalN = S.node.legal.filter(x => x === 1).length;
+    const nz = CN.filter(x => x > 0).length;
+    const topn = Math.max(...CN), topi = CN.indexOf(topn);
+    const node = S.D.tree.find(t => t.p.join(',') === S.node.path.join(','));
+    const kidTxt = node && node.e.length
+      ? node.e.slice(0, 4).map(e => `${coord(e[0], e[1])}(N=${e[2]},Q=${e[3].toFixed(2)})`).join(' · ')
+      : '无（该节点是叶子，搜索没从这里继续往下）';
+    $('obs').innerHTML = [
+      `该节点: 深度 <b>${S.node.depth}</b> · 进入 <b>${S.node.n_total}</b> 次 · 轮到<b>${S.node.player === 1 ? '黑' : '白'}</b>`,
+      `先验: max P=<b>${Math.max(...P).toFixed(4)}</b> · 熵 <b>${ent.toFixed(2)}</b> / 均匀 ${Math.log(legalN).toFixed(2)}`,
+      `它已展开的子节点: 被访问 ${nz} 个 · 最多的 ${coord((topi / N) | 0, topi % N)} 走了 <b>${topn}</b> 次`,
+      `子节点明细: ${kidTxt}`,
+    ].join('<br>');
+    return;
+  }
   const st = stateAt(S.k), sims = S.D.sims.slice(0, S.k);
   const rootExp = sims.filter(s => s.a.length === 0).length;
   const depth = sims.length ? (sims.reduce((a, s) => a + s.a.length, 0) / sims.length) : 0;
@@ -786,6 +857,14 @@ function renderObs() {
 
 function renderOut() {
   if (!S.D) { $('outKv').textContent = '–'; return; }
+  if (S.node) {
+    $('outKv').innerHTML = `<div>视图</div><div style="color:var(--amber)">树节点(非根)</div>
+      <div>该节点 N</div><div><b>${S.node.n_total}</b></div>
+      <div>深度</div><div>${S.node.depth} 层</div>
+      <div>轮到</div><div>${S.node.player === 1 ? '黑' : '白'}</div>
+      <div>说明</div><div style="color:var(--dim2)">decide 只发生在根；这是搜索中途的局面</div>`;
+    return;
+  }
   const D = S.D, pr = D.prob, mx = Math.max(...pr);
   const pk = pr.indexOf(mx);
   const ent = -pr.reduce((a, x) => a + (x > 0 ? x * Math.log(x) : 0), 0);
@@ -825,14 +904,14 @@ function drawZoom(kind) {
   let mx = 0;
   if (S.D) {
     for (let i = 0; i < 225; i++) {
-      const v = kind === 'policy' ? S.D.policy_now[i] : kind === 'visits' ? st.nT[i] : (st.nT[i] > 0 ? Math.abs(st.q[i]) : 0);
+      const v = kind === 'policy' ? polArr()[i] : kind === 'visits' ? st.nT[i] : (st.nT[i] > 0 ? Math.abs(st.q[i]) : 0);
       mx = Math.max(mx, v);
     }
     for (let i = 0; i < 225; i++) {
       const r = (i / N) | 0, c = i % N;
-      if (S.stones.some(s => s.r === r && s.c === c)) continue;
+      if (viewStones().some(s => s.r === r && s.c === c)) continue;
       let col = null;
-      const nt = mx > 0 ? (kind === 'policy' ? S.D.policy_now[i] : st.nT[i]) / mx : 0;
+      const nt = mx > 0 ? (kind === 'policy' ? polArr()[i] : st.nT[i]) / mx : 0;
       if (kind === 'policy') { if (nt >= HEAT_FLOOR) col = heatColor(nt); }
       else if (kind === 'visits') { if (st.nT[i] > 0 && nt >= HEAT_FLOOR) col = heatColor(nt); }
       else if (st.nT[i] > 0) col = qColor(st.q[i]);
@@ -840,9 +919,9 @@ function drawZoom(kind) {
       ctx.fillStyle = col;
       ctx.fillRect(sp + c * sc - sc * .44, sp + r * sc - sc * .44, sc * .88, sc * .88);
     }
-    const val = i => kind === 'policy' ? S.D.policy_now[i] : kind === 'visits' ? st.nT[i] : st.q[i];
+    const val = i => kind === 'policy' ? polArr()[i] : kind === 'visits' ? st.nT[i] : st.q[i];
     const idxs = Array.from({ length: 225 }, (_, i) => i)
-      .filter(i => { const r = (i / N) | 0, c = i % N; return !S.stones.some(s => s.r === r && s.c === c); })
+      .filter(i => { const r = (i / N) | 0, c = i % N; return !viewStones().some(s => s.r === r && s.c === c); })
       .sort((a, b) => Math.abs(val(b)) - Math.abs(val(a)));
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     idxs.slice(0, 8).forEach(i => {
@@ -854,7 +933,7 @@ function drawZoom(kind) {
       ctx.fillStyle = '#fff'; ctx.fillText(t, x, y - .6);
     });
   }
-  for (const s of S.stones) {
+  for (const s of viewStones()) {
     const x = sp + s.c * sc, y = sp + s.r * sc;
     const g = ctx.createRadialGradient(x - sc * .14, y - sc * .14, 1, x, y, sc * .4);
     if (s.v === 1) { g.addColorStop(0, '#6b6b6b'); g.addColorStop(1, '#000'); }
@@ -874,7 +953,7 @@ function drawZoom(kind) {
   $('zoomTitle').textContent = nm; $('zoomTitle').style.color = col;
   $('zoomDesc').textContent = desc;
   $('zoomMeta').textContent = !S.D ? '尚未分析' : (kind === 'policy'
-    ? `max ${Math.max(...S.D.policy_now).toFixed(4)} · 熵 ${(-S.D.policy_now.reduce((a, x) => a + (x > 0 ? x * Math.log(x) : 0), 0)).toFixed(2)} · ΣN ${st.sumN}`
+    ? `max ${Math.max(...polArr()).toFixed(4)} · 熵 ${(-polArr().reduce((a, x) => a + (x > 0 ? x * Math.log(x) : 0), 0)).toFixed(2)} · ΣN ${st.sumN}`
     : kind === 'visits' ? `ΣN ${st.sumN} · 最多 ${Math.max(...st.nT)} 次 · 被访问 ${st.nT.filter(x => x > 0).length} 点`
     : `已访问 ${st.nT.filter(x => x > 0).length} 点 · Q 范围 ${(() => { const a = Array.from(st.nT).map((n, i) => n > 0 ? st.q[i] : null).filter(x => x !== null); return a.length ? Math.min(...a).toFixed(2) + ' ~ ' + Math.max(...a).toFixed(2) : '—'; })()}`);
 }
@@ -899,6 +978,105 @@ function hideZoom() {
   const z = $('zoom');
   z.classList.remove('in');
   setTimeout(() => { if (!zoomOn) z.style.display = 'none'; }, 130);
+}
+
+
+/* ══════════════════════════════════════════════════════════════════
+   搜索树 (冰柱图) + 节点当根
+   ══════════════════════════════════════════════════════════════════ */
+function renderTree() {
+  const svg = $('treeSvg'), wrap = $('treeWrap');
+  if (!S.D || !S.D.tree || !S.D.tree.length) { svg.innerHTML = ''; $('treeStat').textContent = '尚未分析'; return; }
+  const nodes = S.D.tree;
+  const byK = new Map(nodes.map(n => [n.p.join(','), n]));
+  const root = byK.get('');
+  if (!root) { svg.innerHTML = ''; return; }
+  const kidsOf = n => (n.e || []).map(([r, c, nn, q, p]) => {
+    const k = (n.p.join(',') ? n.p.join(',') + ',' : '') + r + ',' + c;
+    const ch = byK.get(k);
+    return ch ? { ch, r, c, n: nn, q, p } : null;
+  }).filter(Boolean).sort((a, b) => b.n - a.n);
+
+  let maxD = 0;
+  const place = (node, x0, x1, d) => {
+    node._x0 = x0; node._x1 = x1; node._d = d; maxD = Math.max(maxD, d);
+    const ch = kidsOf(node);
+    if (!ch.length) return;
+    const tot = ch.reduce((a, c) => a + c.n, 0);
+    const denom = Math.max(tot, node.n, 1);
+    let x = x0;
+    ch.forEach(c => { const w = (x1 - x0) * c.n / denom; place(c.ch, x, x + w, d + 1); x += w; });
+  };
+  const W = Math.max(560, (wrap.clientWidth || 900) - 4);
+  place(root, 0, W, 0);
+  const rowH = Math.max(13, Math.min(24, Math.floor(150 / (maxD + 1))));
+  const H = (maxD + 1) * rowH + 6;
+  svg.setAttribute('width', W); svg.setAttribute('height', H);
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+
+  const focusK = S.node ? S.node.path.join(',') : null;
+  const onlyN2 = $('treeN2') && $('treeN2').checked;
+  let html = '';
+  // 层分隔线
+  for (let d = 0; d <= maxD; d++) {
+    html += `<line x1="0" y1="${d * rowH + rowH - 1}" x2="${W}" y2="${d * rowH + rowH - 1}"
+      stroke="#16233c" stroke-width="1"/>`;
+  }
+  const walk = (node, edge) => {
+    const w = Math.max(1, node._x1 - node._x0 - 0.4);
+    const q = edge ? edge.q : null;
+    let fill;
+    if (q === null) fill = 'rgba(56,189,248,.42)';
+    else if (Math.abs(q) < 0.02) fill = 'rgba(120,140,170,.42)';
+    else fill = q > 0 ? `rgba(52,211,153,${0.22 + 0.6 * Math.min(1, Math.abs(q))})`
+                      : `rgba(248,113,113,${0.22 + 0.6 * Math.min(1, Math.abs(q))})`;
+    const label = edge ? (LETTERS[edge.c] + (15 - edge.r)) : '根';
+    const tip = `${label} · N=${node.n}${edge ? ` · Q=${edge.q.toFixed(3)} · P=${edge.p.toFixed(4)}` : ''} · 深度 ${node._d}`;
+    const isFocus = focusK === node.p.join(',');
+    html += `<g class="tb" onclick='focusNode(${JSON.stringify(node.p)})'><title>${tip}</title>` +
+      `<rect x="${node._x0.toFixed(1)}" y="${node._d * rowH}" width="${w.toFixed(1)}" height="${rowH - 1.5}" ` +
+      `rx="1.5" fill="${fill}" ${isFocus ? 'stroke="#f59e0b" stroke-width="1.6"' : ''}/>`;
+    if (w > 26 && (!onlyN2 || node.n >= 2)) {
+      html += `<text x="${(node._x0 + 3).toFixed(1)}" y="${node._d * rowH + rowH / 2 + 3.2}">`
+        + `${edge ? label : '根'} ${node.n}</text>`;
+    }
+    html += '</g>';
+    kidsOf(node).forEach(c => walk(c.ch, c));
+  };
+  walk(root, null);
+  svg.innerHTML = html;
+
+  const internals = nodes.filter(n => n.n > 1).length;
+  $('treeStat').textContent = `节点 ${nodes.length}（内部 ${internals} / 叶子 ${nodes.length - internals}）· `
+    + `最大深度 ${maxD} · 根访问 ${root.n} · 颜色=Q(绿好/红差)`;
+}
+
+async function focusNode(flat) {
+  flat = flat || [];
+  if (!S.D) return;
+  try {
+    const res = await fetch('/api/node', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: flat }),
+    });
+    const j = await res.json();
+    if (!j.ok) { msg(j.error || '取节点失败'); return; }
+    if (!flat.length) { S.node = null; S.nodeStones = null; }
+    else { S.node = j; S.nodeStones = j.stones.map((s, i) => ({ r: s[0], c: s[1], v: s[2], n: i + 1 })); }
+    S.sel = null;
+    updateNodeBar(); renderAll();
+  } catch (e) { msg('节点请求失败: ' + e); }
+}
+
+function updateNodeBar() {
+  const bar = $('nodebar');
+  if (!S.node) { bar.classList.remove('on'); return; }
+  bar.classList.add('on');
+  const f = S.node.path, parts = [];
+  for (let i = 0; i < f.length; i += 2) parts.push(coord(f[i], f[i + 1]));
+  $('nbPath').textContent = '根' + (parts.length ? ' → ' + parts.join(' → ') : '');
+  $('nbN').textContent = S.node.n_total;
+  $('nbD').textContent = S.node.depth;
 }
 
 /* 曲线: ΣN 随模拟 */
@@ -933,8 +1111,15 @@ function drawCurve() {
    ══════════════════════════════════════════════════════════════════ */
 function renderAll() {
   drawMain(); drawMini('cPolicy', 'policy'); drawMini('cVisit', 'visits'); drawMini('cQ', 'q');
-  renderCand(); renderFormula(); renderSim(); renderObs(); renderOut(); drawCurve();
+  renderCand(); renderFormula(); renderSim(); renderObs(); renderOut(); drawCurve(); renderTree();
   if (zoomOn) drawZoom(S.zoomKind || 'policy');
+  if (S.node) {
+    $('kLabel').textContent = '节点视图（不可回放）';
+    $('kRange').max = 0; $('kRange').value = 0; $('kRange').disabled = true;
+    $('kMeta').textContent = `该节点 N=${S.node.n_total} · 深度 ${S.node.depth}`;
+    return;
+  }
+  $('kRange').disabled = false;
   $('kLabel').textContent = `sim ${S.k} / ${S.D ? S.D.sims.length : 0}`;
   $('kRange').max = S.D ? S.D.sims.length : 0;
   $('kRange').value = S.k;
@@ -1032,6 +1217,7 @@ async function analyze(silent) {
     const D = await r.json();
     if (!D.ok) { msg(D.error || '分析失败'); return; }
     S.D = D; S.k = D.sims.length; S.tau = body.tau;
+    S.node = null; S.nodeStones = null; updateNodeBar();
     if (!S.sel || S.stones.some(s => s.r === S.sel[0] && s.c === S.sel[1])) S.sel = D.chosen;
     $('hTime').innerHTML = `${D.ms} ms · ${D.ms_per_sim} ms/sim`;
     const b = $('hCheck');

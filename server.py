@@ -69,8 +69,11 @@ log('loaded in %.2fs' % (time.time() - t0))
 
 # ── 追踪器 ────────────────────────────────────────────────────────────
 _ORIG_SEARCH = AGENT.search
-ST = {'cur': None, 'sims': [], 'stack': []}
+ST = {'cur': None, 'sims': [], 'stack': [], 'paths': []}
 LOCK = threading.Lock()
+PATH_OF = {}          # s(bytes) -> 从根到该节点的落点序列 ((r,c), ...)
+PATH_S = {}           # 落点序列 -> s(bytes), _tree_payload 取父边计数用
+ROOT_STATE = {'stones': [], 'player': 1}   # 最近一次 analyze 的根局面(给 /api/node 重演用)
 
 
 def _traced_search(board, prior_noise=False, last_move=None, player=None):
@@ -96,6 +99,8 @@ def _traced_search(board, prior_noise=False, last_move=None, player=None):
     try:
         v = _ORIG_SEARCH(board, prior_noise, last_move, player)
     finally:
+        # 路径 = 栈上每一层"父层选了哪一手"; 必须在 pop 前取(叶子先退出, 父层还没轮到退出)
+        lv['path'] = tuple(tuple(e['a']) for e in ST['stack'][1:] if e.get('a'))
         ST['stack'].pop()
     # 退出后判类型: 终局 / 叶子(本次网络展开) / 内部节点
     w = AGENT.winner.get(s)
@@ -108,6 +113,8 @@ def _traced_search(board, prior_noise=False, last_move=None, player=None):
     cur = ST['cur']
     cur['vs'][depth] = round(float(v), 6)
     cur['kinds'][depth] = kind
+    PATH_OF[s] = lv['path']      # 根=() ; 子=父路径+本层落点
+    PATH_S[lv['path']] = s
     if depth > 0:
         cur['arcs'][depth - 1] = lv['a']
     if depth == 0:
@@ -162,6 +169,95 @@ def index():
     return send_file(os.path.join(HERE, 'static', 'index.html'))
 
 
+def _tree_payload():
+    """把当前 MCTS 树导出成扁平列表: 每个节点 = 从根出发的落点路径 + 它自己的统计 + 出边。
+    边格式 [r, c, n, q, p]; 节点 path 用扁平 [r0,c0,r1,c1,...] 省体积。"""
+    out = []
+    for sk, path in PATH_OF.items():
+        pol = AGENT.policy.get(sk)
+        if pol is None:          # 没展开过的节点不可能是树节点
+            continue
+        # N = 进入该节点的次数 = 父节点该边计数(与 decide 的 prob 同一口径);
+        # 根没有父边, 用 count 总和。⚠️ v24 只给"内部节点"建 count, 叶子只有 policy。
+        n_in = 1
+        if path:
+            par_s = PATH_S.get(path[:-1])
+            par_cnt = AGENT.count.get(par_s) if par_s else None
+            if par_cnt is not None:
+                a = path[-1]
+                n_in = int(par_cnt[a[0], a[1]]) or 1
+        else:
+            n_in = int(AGENT.count[sk].sum()) if sk in AGENT.count else 1
+        cnt = AGENT.count.get(sk)   # ⚠️ 叶子只有 policy, 没有 count
+        if cnt is None:             # 叶子 = 被到达 1 次即展开
+            out.append({'p': [int(x) for a in path for x in a], 'n': n_in, 'e': []})
+            continue
+        q = AGENT.q.get(sk)
+        edges = []
+        for idx in np.nonzero(cnt.reshape(-1) > 0)[0]:
+            r, c = np.unravel_index(int(idx), (N, N))
+            edges.append([int(r), int(c), int(cnt[r, c]),
+                          round(float(q[r, c]), 4), round(float(pol[r, c]), 5)])
+        edges.sort(key=lambda e: -e[2])
+        out.append({'p': [int(x) for a in path for x in a], 'n': n_in, 'e': edges})
+    out.sort(key=lambda o: (len(o['p']), o['p']))
+    return out
+
+
+def _replay(path):
+    """从根局面按落点序列重演, 返回 (canonical, 绝对棋盘棋子列表, 轮到谁)。"""
+    b = _board_from_stones(ROOT_STATE['stones'])
+    player = int(ROOT_STATE['player'])
+    cur = (player * b).astype(np.int8)
+    p = player
+    stones = [list(map(int, st)) for st in ROOT_STATE['stones']]
+    for i in range(0, len(path), 2):
+        r, c = path[i], path[i + 1]
+        (nb, np_), _, _, _ = env.next_step((cur, mod.BLACK), np.array([r, c]))
+        cur = (np_ * nb).astype(np.int8)
+        stones.append([r, c, int(p)])
+        p = -p
+    return cur, stones, p
+
+
+@app.route('/api/node', methods=['POST'])
+def node_view():
+    """按路径重演到树中任意节点, 返回该节点自己的 225 个候选(P/N/Q)。"""
+    d = request.get_json(force=True, silent=True) or {}
+    path = [int(x) for x in (d.get('path') or [])]
+    with LOCK:
+        cur, stones, p = _replay(path)
+        s = cur.tobytes()
+        if s not in AGENT.policy:
+            return jsonify({'ok': False, 'error': '该节点不在当前树里(换局面或重置树后请重新分析)'})
+        pol = AGENT.policy[s]
+        cnt = AGENT.count.get(s)                    # 叶子无 count → 全 0
+        if cnt is None:
+            cnt = np.zeros((N, N), dtype=float)
+        q = AGENT.q.get(s)
+        if q is None:
+            q = np.zeros((N, N), dtype=float)
+        # N = 进入次数 = 父边计数(与树里、与 decide 的 prob 同口径)
+        if path:
+            par_c, _, _ = _replay(path[:-2])
+            par_cnt = AGENT.count.get(par_c.tobytes())
+            n_in = int(par_cnt[path[-2], path[-1]]) if par_cnt is not None else 1
+        else:
+            n_in = int(cnt.sum()) or 1
+        occ = np.zeros((N, N), dtype=np.int8)
+        for r, c, v in stones:
+            occ[r, c] = v
+        return jsonify({
+            'ok': True, 'path': path, 'player': int(p), 'depth': len(path) // 2,
+            'n_total': n_in,
+            'stones': [[int(r), int(c), int(v)] for r, c, v in stones],
+            'policy': [round(float(x), 6) for x in pol.reshape(-1)],
+            'count': [int(x) for x in cnt.reshape(-1)],
+            'q': [round(float(x), 5) for x in q.reshape(-1)],
+            'legal': [0 if occ[r, c] else 1 for r in range(N) for c in range(N)],
+        })
+
+
 @app.route('/api/status')
 def status():
     return jsonify({
@@ -180,7 +276,10 @@ def reset():
         AGENT.reset_mcts()
         ST['sims'] = []
         ST['stack'] = []
+        ST['paths'] = []
         ST['cur'] = None
+        PATH_OF.clear()
+        PATH_S.clear()
     return jsonify({'ok': True, 'tree_nodes': 0})
 
 
@@ -231,11 +330,14 @@ def analyze():
         pi_show = pi_raw * legal
         pi_show = pi_show / pi_show.sum() if pi_show.sum() > 0 else legal / legal.sum()
 
+        ROOT_STATE['stones'] = [list(map(int, st)) for st in stones]
+        ROOT_STATE['player'] = player
         if seed is not None:
             np.random.seed(int(seed))
         t1 = time.time()
         ST['sims'] = []
         ST['stack'] = []
+        ST['paths'] = []
         ST['cur'] = None
         loc, prob = AGENT.decide((b, player), return_prob=True, noise=noise,
                                  temperature=tau, greedy=(tau <= 1e-2),
@@ -305,6 +407,7 @@ def analyze():
                       'k': [sm['kinds'][k] for k in sorted(sm['kinds'])],
                       'leaf_v': sm['leaf_v'], 'w': sm['winner']} for sm in sims],
             'kids': kids,
+            'tree': _tree_payload(),
             'selfcheck': selfcheck,
             'replay_delta': float(replay.sum()),
             'truth_delta': float(truth.sum()),
