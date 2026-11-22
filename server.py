@@ -56,9 +56,9 @@ t0 = time.time()
 mod = _load_v24()
 mod.device = torch.device('cpu')          # batch=1 时 CPU 比 MPS 快 (5.9 vs 13.9 ms/sim)
 env = gym.make('Gomuku-v0')
+NET_KW = {'conv_filters': [128], 'residual_filters': [[128, 128]] * 8}
 AGENT = mod.AlphaZeroAgent(
-    env=env,
-    kwargs={'conv_filters': [128], 'residual_filters': [[128, 128]] * 8},
+    env=env, kwargs=dict(NET_KW),
     sim_count=50, batches=1, batch_size=8, disable_compile=True)
 AGENT.net.load_state_dict(torch.load(V24_W, map_location='cpu'))
 AGENT.net.to(mod.device)
@@ -95,6 +95,26 @@ def _traced_search(board, prior_noise=False, last_move=None, player=None):
         par = ST['stack'][-1]
         d = np.argwhere((par['board'] == 0) & (b != 0))
         lv['a'] = [int(d[0][0]), int(d[0][1])] if len(d) else None
+        # ── 选择快照: 此刻父节点的 count/q 仍是"选点之前"的状态(更新要等递归返回) ──
+        sp = par['s']
+        if lv['a'] is not None and sp in AGENT.count:
+            cnt, qq, pol, val = AGENT.count[sp], AGENT.q[sp], AGENT.policy[sp], AGENT.valid[sp]
+            cs = float(cnt.sum())
+            coef = (AGENT.c_init + np.log1p((1 + cs) / AGENT.c_base)) * math.sqrt(cs) / (1. + cnt)
+            ub = np.where(val > 0, qq + coef * pol, -np.inf)
+            a = (lv['a'][0], lv['a'][1])
+            pu = float(ub[a])
+            legal_ub = ub[val > 0]
+            tmp = ub.copy(); tmp[a] = -np.inf
+            tf = tmp.reshape(-1)
+            j = int(np.argmax(tf))
+            lv['sel'] = {
+                'cs': round(cs, 1), 'n': int(cnt[a]), 'q': round(float(qq[a]), 5),
+                'p': round(float(pol[a]), 6), 'coef': round(float(coef[a]), 5),
+                'u': round(float(coef[a] * pol[a]), 5), 'puct': round(pu, 5),
+                'rank': int((legal_ub > pu).sum()) + 1, 'legal': int((val > 0).sum()),
+                'second': [int(j // N), int(j % N), round(float(tf[j]), 5)] if np.isfinite(tf[j]) else None,
+            }
     ST['stack'].append(lv)
     try:
         v = _ORIG_SEARCH(board, prior_noise, last_move, player)
@@ -115,6 +135,8 @@ def _traced_search(board, prior_noise=False, last_move=None, player=None):
     cur['kinds'][depth] = kind
     PATH_OF[s] = lv['path']      # 根=() ; 子=父路径+本层落点
     PATH_S[lv['path']] = s
+    if 'sel' in lv:
+        ST['cur'].setdefault('sel', {})[depth] = lv['sel']
     if depth > 0:
         cur['arcs'][depth - 1] = lv['a']
     if depth == 0:
@@ -129,6 +151,27 @@ def _traced_search(board, prior_noise=False, last_move=None, player=None):
 
 
 AGENT.search = _traced_search
+
+# 对比用: 每个权重一个"不追踪"的 agent(避免污染主树), 按路径缓存
+POOL = {}
+W_DIRS = [os.path.join(HERE, 'weights'),
+          '/Users/kid/AlphaZero_Gomoku_15x15_v24/gomoku_checkpoints_v24']
+
+
+def _agent_for(path):
+    a = POOL.get(path)
+    if a is None:
+        if not os.path.exists(path):
+            raise ValueError('权重不存在: %s' % path)
+        a = mod.AlphaZeroAgent(env=env, kwargs=dict(NET_KW), sim_count=50,
+                               batches=1, batch_size=8, disable_compile=True)
+        a.net.load_state_dict(torch.load(path, map_location='cpu'))
+        a.net.to(mod.device)
+        a.net.eval()
+        POOL[path] = a
+        log('pool + %s (共 %d 个)' % (os.path.basename(path), len(POOL)))
+    return a
+
 
 # ── HTTP ─────────────────────────────────────────────────────────────
 app = Flask(__name__, static_folder=None)
@@ -256,6 +299,71 @@ def node_view():
             'q': [round(float(x), 5) for x in q.reshape(-1)],
             'legal': [0 if occ[r, c] else 1 for r in range(N) for c in range(N)],
         })
+
+
+@app.route('/api/weights')
+def weights_list():
+    import glob
+    out = []
+    for d in W_DIRS:
+        if not os.path.isdir(d):
+            continue
+        for f in glob.glob(os.path.join(d, '*.pt')):
+            st = os.stat(f)
+            out.append({'path': f, 'name': os.path.basename(f),
+                        'mb': round(st.st_size / 1048576, 1), 'mtime': int(st.st_mtime)})
+    out.sort(key=lambda x: -x['mtime'])
+    return jsonify({'ok': True, 'current': V24_W, 'weights': out[:60]})
+
+
+@app.route('/api/compare', methods=['POST'])
+def compare():
+    """同一局面, 多副权重各自 decide 一次, 返回 policy/访问/选点 供并排对比。
+    走独立的未追踪 agent + 每次 reset_mcts, 不碰主页面的树。"""
+    d = request.get_json(force=True, silent=True) or {}
+    stones = d.get('stones') or []
+    sim = max(1, min(int(d.get('sim', 50)), 800))
+    paths = [str(x) for x in (d.get('weights') or [])][:4]
+    if len(paths) < 2:
+        return jsonify({'ok': False, 'error': '至少选两副权重'})
+    b = _board_from_stones(stones)
+    nb, nw = int((b == 1).sum()), int((b == -1).sum())
+    player = int(d.get('player') or (1 if nb == nw else -1))
+    lm = d.get('last_move')
+    # ⚠️ decide 内部会再包一层 np.array([last_move]) → 这里必须给 1 维 (2,), 给 (1,2) 会变 3 维
+    lm_dec = np.array(lm) if lm else None
+    lm_pred = np.array([lm]) if lm else None
+    canon = (player * b).astype(np.int8)
+    out = []
+    with LOCK:
+        for p in paths:
+            try:
+                a = _agent_for(p)
+            except Exception as e:
+                return jsonify({'ok': False, 'error': str(e)})
+            a.sim_count = sim
+            a.reset_mcts()
+            t0 = time.time()
+            loc, prob = a.decide((b, player), return_prob=True, noise=False,
+                                 temperature=0.0, greedy=True, last_move=lm_dec)
+            dt = (time.time() - t0) * 1000
+            pis, vs = a.predict(canon[None], last_moves=lm_pred, players=player)
+            pi = np.exp(np.asarray(pis[0])).reshape(N, N) * (b == 0)
+            pi = pi / pi.sum() if pi.sum() > 0 else pi
+            s = canon.tobytes()
+            out.append({
+                'name': os.path.basename(p), 'path': p,
+                'v_root': round(float(np.asarray(vs[0]).reshape(-1)[0]), 4),
+                'chosen': [int(loc[0]), int(loc[1])],
+                'prob': [round(float(x), 6) for x in prob.reshape(-1)],
+                'policy': [round(float(x), 6) for x in pi.reshape(-1)],
+                'count': [int(x) for x in a.count[s].reshape(-1)] if s in a.count else [0] * (N * N),
+                'q': [round(float(x), 5) for x in a.q[s].reshape(-1)] if s in a.q else [0.0] * (N * N),
+                'ms': round(dt),
+            })
+    log('compare %s sim=%d -> %s' % ([o['name'] for o in out], sim,
+                                     [o['chosen'] for o in out]))
+    return jsonify({'ok': True, 'player': player, 'sim': sim, 'items': out})
 
 
 @app.route('/api/status')
@@ -405,6 +513,7 @@ def analyze():
             'sims': [{'a': [sm['arcs'][k] for k in sorted(sm['arcs'])],
                       'v': [sm['vs'][k] for k in sorted(sm['vs'])],
                       'k': [sm['kinds'][k] for k in sorted(sm['kinds'])],
+                      'sel': [sm.get('sel', {}).get(k) for k in range(1, max(sm['vs']) + 1)],
                       'leaf_v': sm['leaf_v'], 'w': sm['winner']} for sm in sims],
             'kids': kids,
             'tree': _tree_payload(),
