@@ -24,3 +24,6 @@ Thumbs.db
 .idea/
 .vscode/
 *.swp
+
+# 视频逐帧产物(重渲时生成, 不要入库)
+video/frames/
