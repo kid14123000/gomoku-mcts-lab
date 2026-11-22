@@ -11,7 +11,7 @@
   4. 自检: 用记录的轨迹在 Python 里重放 count 增量，必须等于 decide 后 count 的真实增量。
      不一致 → selfcheck=false（前端会红字报警），绝不静默。
 
-启动: /Users/kid/AlphaZero_Gomoku_15x15_v24/.venv/bin/python server.py
+启动: ./run.sh   (或 <训练项目>/.venv/bin/python server.py)
 """
 import os
 import sys
@@ -31,14 +31,14 @@ from flask import Flask, jsonify, request, send_file
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
-# 优先用仓库自带副本(克隆即可跑); 找不到再回落到本机训练目录
+# 优先用仓库自带副本(克隆即可跑); 找不到再回落到本机训练目录(~ 展开, 不写死用户名)
 _HERE_PY = os.path.join(HERE, 'vendor', 'Gomoku-v0_pt_v24.py')
 _HERE_W = os.path.join(HERE, 'weights', 'weights_it176_v24.pt')
-_TRAIN_PY = '/Users/kid/AlphaZero_Gomoku_15x15_v24/Gomoku-v0_pt_v24.py'
-_TRAIN_W = '/Users/kid/AlphaZero_Gomoku_15x15_v24/gomoku_checkpoints_v24/weights_it176_v24.pt'
+_TRAIN_PY = os.path.expanduser('~/AlphaZero_Gomoku_15x15_v24/Gomoku-v0_pt_v24.py')
+_TRAIN_W = os.path.expanduser('~/AlphaZero_Gomoku_15x15_v24/gomoku_checkpoints_v24/weights_it176_v24.pt')
 
 # 棋谱/题目: 默认复用旧项目那份(读写同一个文件, 避免两套数据分叉), 可用 POSITIONS_FILE 覆盖
-_OLD_POS = '/Users/kid/AlphaZero_Gomoku_15x15_v24/web/positions.json'
+_OLD_POS = os.path.expanduser('~/AlphaZero_Gomoku_15x15_v24/web/positions.json')
 POS_FILE = os.environ.get('POSITIONS_FILE') or (_OLD_POS if os.path.exists(_OLD_POS)
                                                 else os.path.join(HERE, 'positions.json'))
 _POS_LOCK = threading.Lock()
@@ -162,7 +162,7 @@ AGENT.search = _traced_search
 # 对比用: 每个权重一个"不追踪"的 agent(避免污染主树), 按路径缓存
 POOL = {}
 W_DIRS = [os.path.join(HERE, 'weights'),
-          '/Users/kid/AlphaZero_Gomoku_15x15_v24/gomoku_checkpoints_v24']
+          os.path.expanduser('~/AlphaZero_Gomoku_15x15_v24/gomoku_checkpoints_v24')]
 
 
 def _agent_for(path):

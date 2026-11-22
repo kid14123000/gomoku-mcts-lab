@@ -5,7 +5,7 @@ cd "$(dirname "$0")"
 
 # python 解释器: 环境变量 > 仓库内 .venv > 本机训练 venv > 系统 python3
 if [ -z "$PY" ]; then
-  for c in "./.venv/bin/python" "/Users/kid/AlphaZero_Gomoku_15x15_v24/.venv/bin/python"; do
+  for c in "./.venv/bin/python" "$HOME/AlphaZero_Gomoku_15x15_v24/.venv/bin/python"; do
     [ -x "$c" ] && PY="$c" && break
   done
 fi

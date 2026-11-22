@@ -96,8 +96,9 @@ LAB_PORT=5055 \
 
 ## 棋谱 / 题目：和旧看板共用一份数据
 
-默认直接读写旧项目那份 **`/Users/kid/AlphaZero_Gomoku_15x15_v24/web/positions.json`**（单一真相源，
-不用在两个工具之间搬数据），用 `POSITIONS_FILE` 可以指到别处：
+默认直接读写旧看板那份 **`~/AlphaZero_Gomoku_15x15_v24/web/positions.json`**（单一真相源，
+不用在两个工具之间搬数据），用 `POSITIONS_FILE` 可以指到别处（仓库自带 `weights/` 里没有棋谱，
+第一次跑时如果这个文件不存在，就会落到本目录的 `positions.json`）：
 
 ```bash
 POSITIONS_FILE=/path/to/positions.json ./run.sh
