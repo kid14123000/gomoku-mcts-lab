@@ -25,7 +25,7 @@ ACCENT = "#FFFF00"
 GREY   = "#94A3B8"
 WHITE  = "#F8FAFC"
 
-OUT = os.environ.get("FRAMES_DIR") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "frames")
+OUT = "/Users/kid/manim_lab/frames"
 os.makedirs(OUT, exist_ok=True)
 
 def ease(p):
@@ -101,12 +101,12 @@ class Frame:
 # ───────────────────────── 幕 1：标题 ─────────────────────────
 def s1(t, fr):
     fr.board(W / 2, H / 2 + 10, al=0.10 * fade(t, 0, 1.2), cell=34, lw=1.1)
-    a = fade(t, 0.6, 1.8, 4.6, 5.4)
-    fr.txt(W/2, 430, "一次 MCTS 决策", 54, WHITE, a, weight="bold")
-    b = fade(t, 1.4, 2.4, 4.6, 5.4)
-    fr.txt(W/2, 348, "拆开来看", 54, PRIOR, b, weight="bold")
-    c = fade(t, 2.6, 3.4, 4.6, 5.4)
-    fr.txt(W/2, 262, "15×15 五子棋   ·   800 次模拟   ·   权重 it176", 22, GREY, c)
+    a = fade(t, 0.3, 1.4, 5.2, 6.0)
+    fr.txt(W/2, 432, "你下棋的时候，脑子里在干什么？", 33, WHITE, a, weight="bold")
+    b = fade(t, 2.7, 3.7, 5.2, 6.0)
+    fr.txt(W/2, 338, "一次 MCTS 决策，拆开来看", 44, PRIOR, b, weight="bold")
+    c = fade(t, 3.9, 4.7, 5.2, 6.0)
+    fr.txt(W/2, 268, "15×15 五子棋 · 800 次模拟 · 权重 it176", 20, GREY, c)
 
 # ───────────────────────── 幕 2：先验 ─────────────────────────
 def s2(t, fr):
@@ -202,27 +202,27 @@ BX, BY, BCELL = 250, 360, 27
 
 # 每个 beat: (时长, 标题, 说明1, 说明2, 表格行, 棋盘高亮, 回传行)
 BEATS = [
- (5.0, "⑧ 走一次 decide：从先验到落子",
+ (5.0, "⑧ 现在把时钟拨慢，看它走一步",
   "23 子局面　合法点 202", "", None, None, None),
- (6.5, "第 0 步：网络前向一次 → 先验",
-  "一次前向只给出概率和估值，不给答案",
+ (6.5, "第 0 步：先问一下网络",
+  "它只给概率和估值，不给答案",
   "v = −0.3000 （白棋视角）", "prior", None, None),
- (7.0, "sim #1：先算根的先验，什么都不落",
-  "根节点还没有 count → 直接返回 v = −0.3000",
+ (7.0, "第 1 次进去：一个点都还没落",
+  "根上还没有访问数，算完先验就退出来",
   "模拟次数 0 ／ 访问 0", "sim1", None, None),
- (9.5, "sim #2：所有点的 PUCT 都是 0",
-  "ΣN = 0 → coef = 0 → PUCT = 0·P = 0（都一样）",
-  "取扫描顺序第一个合法点 → A1 (0,0)", "sim2", "A1", "+0.9980  →  取反  →  −0.9980"),
- (9.5, "sim #3：先验终于起作用",
-  "ΣN = 1 → coef = 1.25 → PUCT = coef × P",
+ (9.5, "第 2 次：所有点的 PUCT 全是 0",
+  "coef 还是 0，PUCT 就等于 0×先验，全都一样",
+  "程序按扫描顺序，随手取了 A1 (0,0)", "sim2", "A1", "+0.9980  →  取反  →  −0.9980"),
+ (9.5, "第 3 次：coef 终于不是 0 了",
+  "ΣN = 1 → coef = 1.25 → PUCT = 1.25 × 先验",
   "先验最高的 (8,8) 胜出", "sim3", "H8", "−0.9614  →  取反  →  +0.9614"),
- (8.0, "sim #4：Q 高的点被继续加深",
-  "根 : (8,8) PUCT = 1.2193 仍第一",
-  "进子树后又遇到 ΣN=0 → 再次全 0 → 扫描取 (0,0)", "sim4", "H8", "+0.9981  →  取反  →  −0.9981"),
- (8.0, "14 次之后，访问长成这样",
+ (8.0, "第 4 次：它回到刚才那条路",
+  "(8,8) 现在是 1.2193，还是第一",
+  "可进去之后又全是 0 —— 再来一遍扫描", "sim4", "H8", "+0.9981  →  取反  →  −0.9981"),
+ (8.0, "14 次了。数一下每个点被走过几次",
   "π = N / ΣN　→　(8,8) 84.6%", "按 N 选点 → (8,8)", "agg", "H8", None),
- (4.5, "800 次，就是这个过程重复 800 遍",
-  "树越深的地方，模拟越少；没被访问的点，Q 永远是 0", "", "agg2", "H8", None),
+ (4.5, "800 次，就是把这一套重复 800 遍",
+  "树越深，模拟越少；没被访问的点，Q 永远是 0", "", "agg2", "H8", None),
 ]
 
 ROWS = [  # (label, N, Q, P, U, PUCT)
@@ -343,11 +343,14 @@ def s_walk(t, fr):
         if is_win and g > 0.05:
             fr.rect(CX[0] - 55, ry - 15, CX[5] - CX[0] + 110, 30, SEARCH, 0.10 * al * g, z=4)
 
-    # 算式行
+    # 算式行（无表格的步居中放，避免大片空白）
     if tab in FORMULA:
         f_txt, f_col = FORMULA[tab]
         ga = ease(seg(lt, 0.8, 1.4))
-        fr.txt(520, 246, f_txt, 19, f_col, al * ga, ha="left")
+        if show_tab:
+            fr.txt(520, 246, f_txt, 19, f_col, al * ga, ha="left")
+        else:
+            fr.txt(520, 470, f_txt, 20, f_col, al * ga, ha="left")
 
     # 回传条
     if back:
@@ -388,13 +391,13 @@ H_CAND = [((8, 8), "我方能成四（活四）", SEARCH), ((6, 10), "对方活�
 def s_human(t, fr):
     TOT = 16.0
     al = fade(t, 0, 0.7) * (1 - ease(seg(t, TOT - 0.8, TOT)))
-    fr.txt(W / 2, 668, "① 人类怎么读棋：先看哪里，而不是全部算一遍", 26, WHITE, al, weight="bold")
+    fr.txt(W / 2, 668, "① 先说人。你落子之前，脑子里在干嘛？", 26, WHITE, al, weight="bold")
 
     fr.board(HX, HY, n=15, cell=HC, al=0.20 * al, lw=1.0)
     draw_stones(fr, HX, HY, HC, al)
 
     # 4 个候选（右侧竖排，互不重叠）
-    fr.txt(500, 585, "人类先看这 4 个点：", 18, GREY, al * ease(seg(t, 1.8, 2.4)), ha="left")
+    fr.txt(500, 585, "你其实只扫这么几个点：", 18, GREY, al * ease(seg(t, 1.8, 2.4)), ha="left")
     for i, (pt, lab, col) in enumerate(H_CAND):
         g = ease(seg(t, 2.0 + i * 0.3, 2.6 + i * 0.3)) * al
         if g <= 0.02: continue
@@ -413,9 +416,9 @@ def s_human(t, fr):
         x, y = fr.cell(8, 10, HX, HY, n=15, cell=HC)
         fr.dot(x, y, HC * 0.42, "#131E2E", a2, ec="#7C8DA6", lw=1.1)
         fr.txt(x, y, "2", 12, "#E2E8F0", a2, weight="bold")
-        fr.txt(500, 380, "1  我先堵 (6,10)", 17, WHITE, a2, ha="left")
-        fr.txt(500, 350, "2  对方 (8,10) 成活四 —— 我挡不住", 17, DANGER, a2, ha="left")
-        fr.txt(500, 318, "这条不通 → 回退", 18, DANGER, a2 * ease(seg(t, 7.2, 7.7)), ha="left")
+        fr.txt(500, 380, "1  我先堵这头 (6,10)", 17, WHITE, a2, ha="left")
+        fr.txt(500, 350, "2  它反手另一头，成活四", 17, DANGER, a2, ha="left")
+        fr.txt(500, 318, "这条路死了。退回去", 18, DANGER, a2 * ease(seg(t, 7.2, 7.7)), ha="left")
 
     # 回退提示
     back = 1 - ease(seg(t, 8.6, 9.6))
@@ -433,18 +436,18 @@ def s_human(t, fr):
         for rr in range(6, 10):
             x2, y2 = fr.cell(rr, rr, HX, HY, n=15, cell=HC)
             fr.rect(x2 - HC * 0.44, y2 - HC * 0.44, HC * 0.88, HC * 0.88, "none", d1, ec=SEARCH, lw=1.6, z=7)
-        fr.txt(500, 250, "3  我走 (8,8) —— (6,6)(7,7)(8,8)(9,9) 成活四", 16, SEARCH, d1, ha="left")
-        fr.txt(500, 218, "黑方没有一手连五 → 我先赢", 18, ACCENT, d1 * ease(seg(t, 11.6, 12.2)), ha="left")
+        fr.txt(500, 250, "3  那我自己成四呢：(6,6)(7,7)(8,8)(9,9)", 16, SEARCH, d1, ha="left")
+        fr.txt(500, 218, "黑棋来不及了 —— 我先赢", 18, ACCENT, d1 * ease(seg(t, 11.6, 12.2)), ha="left")
 
     if t > 13.4:
-        fr.txt(W / 2, 110, "人类只读了 3 手。剩下 198 个点，一个都没进脑子", 23, ACCENT,
+        fr.txt(W / 2, 110, "三步。剩下 198 个点，你压根没算", 23, ACCENT,
                al * ease(seg(t, 13.4, 14.2)))
 
 # ── ② 分支爆炸 ────────────────────────────────────────
 def s_boom(t, fr):
     TOT = 10.0
     al = fade(t, 0, 0.7) * (1 - ease(seg(t, TOT - 0.8, TOT)))
-    fr.txt(W / 2, 668, "② 计算机没有这个直觉：只能全试", 26, WHITE, al, weight="bold")
+    fr.txt(W / 2, 668, "② 换机器来。它没有这个本事", 26, WHITE, al, weight="bold")
 
     counts = [1, 6, 34, 140, 380]
     labs = ["根", "第 1 层 6", "第 2 层 34", "第 3 层 140", "第 4 层 380+"]
@@ -462,19 +465,19 @@ def s_boom(t, fr):
                    6.5 if lv < 3 else 3.8, [WHITE, PRIOR, PRIOR, GREY, GREY][lv], al * 0.85)
         fr.txt(70, y, labs[lv], 15, GREY, al * g, ha="left")
 
-    for i, (txt, tt, col, fs) in enumerate([("200 个点 × 20 层", 6.4, WHITE, 28),
+    for i, (txt, tt, col, fs) in enumerate([("200 个点，往下 20 层", 6.4, WHITE, 28),
                                            ("≈ 10^46 种可能", 7.3, DANGER, 32)]):
         a2 = ease(seg(t, tt, tt + 0.7)) * al
         if a2 > 0.02:
             fr.txt(W / 2, 168 - i * 54, txt, fs, col, a2, weight="bold")
     if t > 8.4:
-        fr.txt(W / 2, 66, "再快的机器，也不可能把这条路走完", 19, GREY, al * ease(seg(t, 8.4, 9.1)))
+        fr.txt(W / 2, 66, "地球上没有机器，能把这条路走完", 19, GREY, al * ease(seg(t, 8.4, 9.1)))
 
 # ── ③ 人 vs 机器 ─────────────────────────────────────
 def s_vs(t, fr):
     TOT = 8.0
     al = fade(t, 0, 0.6) * (1 - ease(seg(t, TOT - 0.7, TOT)))
-    fr.txt(W / 2, 668, "③ 差别不在算得多深，在于看得准不准", 26, WHITE, al, weight="bold")
+    fr.txt(W / 2, 668, "③ 所以卡住的，从来不是算得快", 26, WHITE, al, weight="bold")
 
     lx, ly, lc = 320, 340, 24
     fr.board(lx, ly, n=15, cell=lc, al=0.16 * al, lw=0.9)
@@ -484,7 +487,7 @@ def s_vs(t, fr):
         g = ease(seg(t, 0.8 + i * 0.2, 1.3 + i * 0.2))
         x, y = fr.cell(pt[0], pt[1], lx, ly, n=15, cell=lc)
         fr.rect(x - lc * 0.46, y - lc * 0.46, lc * 0.92, lc * 0.92, "none", al * g, ec=col, lw=2.0, z=9)
-    fr.txt(lx, 108, "只看 4 个点", 20, SEARCH, al)
+    fr.txt(lx, 108, "只扫 4 个", 20, SEARCH, al)
 
     rx, ry, rc = 950, 340, 24
     fr.board(rx, ry, n=15, cell=rc, al=0.16 * al, lw=0.9)
@@ -497,22 +500,22 @@ def s_vs(t, fr):
         if g <= 0.02: continue
         x, y = fr.cell(r, c, rx, ry, n=15, cell=rc)
         fr.dot(x, y, 4.6 * g, DANGER, al * 0.45)
-    fr.txt(rx, 108, "全部 200 个点", 20, DANGER, al)
+    fr.txt(rx, 108, "200 个全试", 20, DANGER, al)
 
     if t > 4.6:
-        fr.txt(W / 2, 52, "它不知道哪一个值得看 —— 这才是真问题", 20, ACCENT, al * ease(seg(t, 4.6, 5.3)))
+        fr.txt(W / 2, 52, "它不知道该看哪儿。这才是死结", 20, ACCENT, al * ease(seg(t, 4.6, 5.3)))
 
 # ── ④ MCTS 四阶段 ────────────────────────────────────
 def s_phase(t, fr):
     TOT = 14.0
     al = fade(t, 0, 0.7) * (1 - ease(seg(t, TOT - 0.8, TOT)))
-    fr.txt(W / 2, 668, "④ 2006：MCTS —— 不评估局面，靠走到终局看谁赢", 24, WHITE, al, weight="bold")
+    fr.txt(W / 2, 668, "④ 2006 年，有人换了个思路：干脆不评估了", 24, WHITE, al, weight="bold")
 
     cx, cy, R = W / 2, 385, 165
-    items = [("选择", "Q + 先验 挑一条路", cx, cy + R, PRIOR),
-             ("扩展", "叶子第一次到达", cx + R, cy, SEARCH),
-             ("模拟", "随机走到终局", cx, cy - R, ACCENT),
-             ("回传", "逐层取反，更新 N / Q", cx - R, cy, DANGER)]
+    items = [("选择", "Q + 先验，挑一条路", cx, cy + R, PRIOR),
+             ("扩展", "第一次碰到新节点", cx + R, cy, SEARCH),
+             ("模拟", "闭着眼走到终局", cx, cy - R, ACCENT),
+             ("回传", "把结果写回路径", cx - R, cy, DANGER)]
     beat = int(t / 2.6) % 4
     for i, (nm, sub, x, y, col) in enumerate(items):
         on = (i == beat)
@@ -529,9 +532,9 @@ def s_phase(t, fr):
                  x1 + (x2 - x1) * 0.74 * g, y1 + (y2 - y1) * 0.74 * g,
                  GREY if not (i == beat) else ACCENT, al * 0.85, 2.0)
 
-    fr.txt(cx, cy + 2, "一次模拟\n= 绕一圈", 20, GREY, al * ease(seg(t, 2.4, 3.0)))
+    fr.txt(cx, cy + 2, "绕一圈 = 一次模拟", 17, GREY, al * ease(seg(t, 2.4, 3.0)))
     if t > 11.0:
-        fr.txt(W / 2, 60, "重复 N 次，访问次数 N(s,a) 就成了这一手的答案", 20, ACCENT,
+        fr.txt(W / 2, 60, "绕 800 圈，每个点被走过几次，就是答案", 20, ACCENT,
                al * ease(seg(t, 11.0, 11.8)))
 
 # ── ⑤ rollout 有多不靠谱 ──────────────────────────────
@@ -541,7 +544,7 @@ ROLL = [(5, 60.0), (10, 40.0), (20, 45.0), (50, 46.0), (100, 45.0),
 def s_rollout(t, fr):
     TOT = 12.0
     al = fade(t, 0, 0.7) * (1 - ease(seg(t, TOT - 0.8, TOT)))
-    fr.txt(W / 2, 668, "⑤ rollout 有个致命问题：它测的是「双方乱下谁赢」", 23, WHITE, al, weight="bold")
+    fr.txt(W / 2, 668, "⑤ 听起来挺美。可它有个坑", 23, WHITE, al, weight="bold")
 
     x0, x1 = 170, 690
     base, hmax = 180, 320
@@ -570,18 +573,18 @@ def s_rollout(t, fr):
         fr.txt(x, base - 20, str(nx), 11, GREY, al * g)
     fr.txt((x0 + x1) / 2, base - 44, "rollout 次数", 14, GREY, al)
 
-    fr.txt(880, 470, "5 次：60%　10 次：40%", 18, GREY, al * ease(seg(t, 2.2, 2.8)), ha="left")
-    fr.txt(880, 424, "2000 次：稳定在 52.3%", 19, DANGER, al * ease(seg(t, 6.6, 7.2)), ha="left")
-    fr.txt(880, 368, "而网络说白只有 35%", 20, SEARCH, al * ease(seg(t, 7.6, 8.2)), ha="left")
+    fr.txt(880, 470, "试 5 次说 60%，试 10 次说 40%", 18, GREY, al * ease(seg(t, 2.2, 2.8)), ha="left")
+    fr.txt(880, 424, "试到 2000 次，稳了：52.3%", 19, DANGER, al * ease(seg(t, 6.6, 7.2)), ha="left")
+    fr.txt(880, 368, "可网络说，白棋只有 35%", 20, SEARCH, al * ease(seg(t, 7.6, 8.2)), ha="left")
     if t > 8.8:
-        fr.txt(W / 2, 84, "不是采样不够，是它算的根本不是「好好下谁赢」", 21, ACCENT,
+        fr.txt(W / 2, 84, "差 17 个点。因为它俩乱下，谁都不防守", 21, ACCENT,
                al * ease(seg(t, 8.8, 9.6)))
 
 # ── ⑥ 探索 vs 利用 ────────────────────────────────────
 def s_explore(t, fr):
     TOT = 12.0
     al = fade(t, 0, 0.7) * (1 - ease(seg(t, TOT - 0.8, TOT)))
-    fr.txt(W / 2, 668, "⑥ 探索 vs 利用：试腻了的让位，没试过的给机会", 24, WHITE, al, weight="bold")
+    fr.txt(W / 2, 668, "⑥ 还有个问题：先试哪个？", 24, WHITE, al, weight="bold")
     fr.txt(W / 2, 612, "PUCT = Q + coef × P / (1 + N)", 23, ACCENT, al)
 
     base, hQ, hU = 235, 190, 640
@@ -602,30 +605,30 @@ def s_explore(t, fr):
         fr.txt(x, base - 52, f"N={Nv}   P={Pv:.4f}", 14, GREY, al)
 
     if t > 6.8:
-        fr.txt(W / 2, 150, "A 的 Q 高，但被访问 8 次后 U 只剩 0.040", 18, GREY, al * ease(seg(t, 6.8, 7.4)))
-        fr.txt(W / 2, 116, "B 一次没试过，U = 0.219 —— 总分会反超", 18, ACCENT, al * ease(seg(t, 7.4, 8.0)))
+        fr.txt(W / 2, 150, "A 赢面高，可试了 8 次，U 掉到 0.040", 18, GREY, al * ease(seg(t, 6.8, 7.4)))
+        fr.txt(W / 2, 116, "B 一次没试，U = 0.219，总分反超", 18, ACCENT, al * ease(seg(t, 7.4, 8.0)))
     if t > 8.4:
-        fr.txt(W / 2, 62, "所以它一定会去试没试过的点。这就是探索", 19, ACCENT, al * ease(seg(t, 8.4, 9.1)))
+        fr.txt(W / 2, 62, "不试，就永远不知道。这一下叫探索", 19, ACCENT, al * ease(seg(t, 8.4, 9.1)))
 
 # ── ⑦ 网络替代 rollout + 先验 ─────────────────────────
 def s_net(t, fr):
     TOT = 12.0
     al = fade(t, 0, 0.7) * (1 - ease(seg(t, TOT - 0.8, TOT)))
-    fr.txt(W / 2, 668, "⑦ 神经网络替掉两件事：模拟到终局、以及「该看哪里」", 23, WHITE, al, weight="bold")
+    fr.txt(W / 2, 668, "⑦ 2016 年，神经网络进场了", 23, WHITE, al, weight="bold")
 
-    fr.txt(300, 590, "以前：模拟走到终局", 19, GREY, al, weight="bold")
-    fr.txt(300, 556, "随机 200 步 → 一个 ±1", 16, DANGER, al * ease(seg(t, 1.0, 1.6)))
+    fr.txt(300, 590, "以前：一直模拟到终局", 19, GREY, al, weight="bold")
+    fr.txt(300, 556, "瞎走 200 步，换一个 ±1", 16, DANGER, al * ease(seg(t, 1.0, 1.6)))
     for i in range(6):
         g = ease(seg(t, 1.2 + i * 0.14, 1.5 + i * 0.14))
         fr.dot(190 + i * 44, 500, 10 * g, DANGER, al * 0.5)
     fr.arrow(150, 470, 470, 470, DANGER, al * 0.6, 1.5)
 
-    fr.txt(960, 590, "现在：一次前向", 19, SEARCH, al, weight="bold")
-    fr.txt(960, 556, "直接给出胜率估值", 16, SEARCH, al * ease(seg(t, 2.0, 2.6)))
+    fr.txt(960, 590, "现在：前向一次", 19, SEARCH, al, weight="bold")
+    fr.txt(960, 556, "直接给一个数", 16, SEARCH, al * ease(seg(t, 2.0, 2.6)))
     fr.arrow(760, 480, 1140, 480, SEARCH, al * ease(seg(t, 2.2, 2.8)), 2.0)
     fr.txt(960, 430, "v = −0.30", 30, ACCENT, al * ease(seg(t, 2.8, 3.4)), weight="bold")
 
-    fr.txt(W / 2, 350, "第二次：同一个网络给出先验", 19, PRIOR,
+    fr.txt(W / 2, 350, "还没完。同一个网络，还能说该看哪儿", 19, PRIOR,
            al * ease(seg(t, 4.2, 4.9)), weight="bold")
     for i, (pt, pv) in enumerate(PRIOR6):
         g = ease(seg(t, 5.0 + i * 0.16, 5.5 + i * 0.16))
@@ -633,9 +636,9 @@ def s_net(t, fr):
         fr.rect(x - 30, 175, 60, 110 * pv / 0.30 * g, PRIOR, al * 0.55)
         fr.txt(x, 175 + 110 * pv / 0.30 * g + 16, f"{pv:.3f}", 12, WHITE, al * g)
         fr.txt(x, 152, f"({pt[0]},{pt[1]})", 11, GREY, al * g)
-    fr.txt(W / 2, 108, "前 10 个点拿了 97% 的先验质量", 17, GREY, al * ease(seg(t, 7.6, 8.2)))
+    fr.txt(W / 2, 108, "前 10 个点，吃掉 97% 的先验", 17, GREY, al * ease(seg(t, 7.6, 8.2)))
     if t > 8.8:
-        fr.txt(W / 2, 60, "于是问题从「200 个点全试」变成「先看这 10 个」", 19, ACCENT,
+        fr.txt(W / 2, 60, "于是「200 个点全试」变成「先看这 10 个」", 19, ACCENT,
                al * ease(seg(t, 8.8, 9.5)))
 
 
@@ -643,7 +646,7 @@ def s_net(t, fr):
 def s_pick(t, fr):
     TOT = 10.0
     al = fade(t, 0, 0.7) * (1 - ease(seg(t, TOT - 0.8, TOT)))
-    fr.txt(W / 2, 668, "⑩ 算完了：访问最多的点，就是它的答案", 26, WHITE, al, weight="bold")
+    fr.txt(W / 2, 668, "⑩ 答案：数一下谁被访问得最多", 26, WHITE, al, weight="bold")
 
     bx, by, bc = 285, 340, 30
     fr.board(bx, by, n=15, cell=bc, al=0.20 * al, lw=1.0)
@@ -669,18 +672,17 @@ def s_pick(t, fr):
         fr.rect(x - bc * 0.5 * pulse, y - bc * 0.5 * pulse, bc * pulse, bc * pulse,
                 "none", g2, ec=SEARCH, lw=2.6, z=9)
         fr.txt(580, 330, "它选了 (8,8)", 27, SEARCH, g2, ha="left", weight="bold")
-        fr.txt(580, 286, "800 次模拟的预算，", 18, GREY, g2, ha="left")
-        fr.txt(580, 254, "最后都压在访问次数上", 18, GREY, g2, ha="left")
+        fr.txt(580, 280, "答案不是它想出来的，是数出来的", 18, GREY, g2, ha="left")
 
     if t > 6.2:
-        fr.txt(W / 2, 110, "这就是 MCTS 有效的地方：它不需要理解棋理，只需要把预算分配好", 20, ACCENT,
+        fr.txt(W / 2, 110, "它不需要懂棋。它只需要把预算分对", 20, ACCENT,
                al * ease(seg(t, 6.2, 7.0)))
 
 # ── ⑪ 自对弈 ─────────────────────────────────────────
 def s_selfplay(t, fr):
     TOT = 11.0
     al = fade(t, 0, 0.7) * (1 - ease(seg(t, TOT - 0.8, TOT)))
-    fr.txt(W / 2, 668, "⑪ 然后它自己跟自己下成千上万局", 26, WHITE, al, weight="bold")
+    fr.txt(W / 2, 668, "⑪ 到这儿它能下棋了。可它还不会变强", 26, WHITE, al, weight="bold")
 
     rng = np.random.default_rng(7)
     x0, y0, step, sz = 100, 540, 76, 46
@@ -707,16 +709,16 @@ def s_selfplay(t, fr):
             fr.txt(960, 470 - i * 52, sub, 15, GREY, g, ha="left")
 
     if t > 7.6:
-        fr.txt(W / 2, 150, "实测：108 代共 10,456 局，每代约 97 局、1,993 条样本", 19, GREY,
+        fr.txt(W / 2, 150, "它自己跟自己下，一局接一局", 19, GREY,
                al * ease(seg(t, 7.6, 8.3)))
-        fr.txt(W / 2, 100, "它没有棋谱可学 —— 老师就是它自己的搜索", 21, ACCENT,
+        fr.txt(W / 2, 100, "它没有棋谱可以背 —— 数据都是自己下出来的", 20, ACCENT,
                al * ease(seg(t, 8.3, 9.1)))
 
 # ── ⑫ 训练先验 ───────────────────────────────────────
 def s_train(t, fr):
     TOT = 10.0
     al = fade(t, 0, 0.7) * (1 - ease(seg(t, TOT - 0.8, TOT)))
-    fr.txt(W / 2, 668, "⑫ 这些数据反过来训练先验网络", 26, WHITE, al, weight="bold")
+    fr.txt(W / 2, 668, "⑫ 这些数据，回头再喂给它自己", 26, WHITE, al, weight="bold")
 
     # 左：数据堆
     for i in range(12):
@@ -738,7 +740,7 @@ def s_train(t, fr):
         if g <= 0.02: continue
         x = 950 + i * 52
         fr.rect(x - 22, 330, 44, 160 * pv / 0.30 * g, PRIOR, g * 0.6, z=5)
-        fr.txt(x, 330 + 160 * pv / 0.30 * g + 14, f"{pv:.2f}", 11, WHITE, g)
+        fr.txt(x, 330 + 160 * pv / 0.30 * g + 14, f"{pv:.3f}", 11, WHITE, g)
     fr.txt(1105, 292, "新的先验", 17, PRIOR, al * ease(seg(t, 3.4, 4.0)), ha="center")
 
     fr.arrow(400, 410, 480, 410, SEARCH, al * ease(seg(t, 1.2, 1.8)), 2.0)
@@ -746,16 +748,16 @@ def s_train(t, fr):
 
     if t > 5.4:
         fr.txt(W / 2, 200, "搜索当老师，网络当学生", 22, ACCENT, al * ease(seg(t, 5.4, 6.1)))
-        fr.txt(W / 2, 152, "把 800 次模拟的结论，学成一次前向就能给出的直觉", 18, GREY,
+        fr.txt(W / 2, 152, "把 800 次模拟的结论，压成一次前向的直觉", 18, GREY,
                al * ease(seg(t, 6.1, 6.8)))
-        fr.txt(W / 2, 100, "实测：网络与搜索的距离 KL ≈ 0.49 ~ 1.41 —— 每代都要搬这一段", 16, GREY,
+        fr.txt(W / 2, 100, "每代都在搬这段距离，KL ≈ 0.49 ~ 1.41", 16, GREY,
                al * ease(seg(t, 6.8, 7.5)))
 
 # ── ⑬ 良性循环 ───────────────────────────────────────
 def s_loop(t, fr):
     TOT = 14.0
     al = fade(t, 0, 0.7) * (1 - ease(seg(t, TOT - 0.9, TOT)))
-    fr.txt(W / 2, 668, "⑬ 于是形成良性循环", 27, WHITE, al, weight="bold")
+    fr.txt(W / 2, 668, "⑬ 于是它开始滚雪球", 27, WHITE, al, weight="bold")
 
     cx, cy = W / 2, 380
     # 螺旋轨迹
@@ -780,8 +782,8 @@ def s_loop(t, fr):
         fr.txt(x, y, lab, 20, PRIOR if k % 2 == 0 else SEARCH, g, weight="bold")
 
     if t > 10.2:
-        fr.txt(W / 2, 128, "它每一代都在把搜索的结论变成直觉", 20, GREY, al * ease(seg(t, 10.2, 10.9)))
-        fr.txt(W / 2, 74, "先验决定考场，价值决定胜负", 29, ACCENT, al * ease(seg(t, 10.9, 11.7)), weight="bold")
+        fr.txt(W / 2, 118, "它没有棋谱，也没有老师", 24, WHITE, al * ease(seg(t, 10.2, 10.9)))
+        fr.txt(W / 2, 62, "它的老师，就是它自己", 30, ACCENT, al * ease(seg(t, 11.0, 11.8)), weight="bold")
 
 # ───────────────────────── 幕 3：树一层层长开 ─────────────────────────
 NODES = [
@@ -800,7 +802,7 @@ BY_LVL = {k: [n for n in POS if LVL[n] == k] for k in range(4)}
 
 def s_tree(t, fr):
     al = fade(t, 0, 0.8, 11.2, 12.0)
-    fr.txt(W / 2, 662, "⑨ 但树不是均匀长的", 30, SEARCH, al, weight="bold")
+    fr.txt(W / 2, 662, "⑨ 800 次算完，这棵树长这样", 30, SEARCH, al, weight="bold")
 
     # 层标签
     for k, lab in enumerate(["根", "第 1 层", "第 2 层", "第 3 层"]):
@@ -865,9 +867,9 @@ def s_tree(t, fr):
             if n in ("A", "B", "B1", "B1a"): continue
             fr.dot(x, y, 6.5, DANGER, al * dim * 0.35)
 
-    fr.txt(W / 2, 196, "800 次模拟 → 790 个局面、最深 8 层", 22, WHITE,
+    fr.txt(W / 2, 196, "790 个不同局面，最深钻到 8 层", 22, WHITE,
            fade(t, 7.8, 8.5, 11.2, 12.0))
-    fr.txt(W / 2, 146, "75% 的边，一辈子只走过一次", 25, DANGER,
+    fr.txt(W / 2, 146, "可有 75% 的边，一辈子只被走过一次", 25, DANGER,
            fade(t, 8.2, 8.9, 11.2, 12.0))
     fr.txt(W / 2, 86, "树形为示意；节点数 / 边数 / 深度为实测", 15, GREY,
            fade(t, 8.5, 9.1, 11.2, 12.0))
