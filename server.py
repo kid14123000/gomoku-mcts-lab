@@ -37,6 +37,13 @@ _HERE_W = os.path.join(HERE, 'weights', 'weights_it176_v24.pt')
 _TRAIN_PY = '/Users/kid/AlphaZero_Gomoku_15x15_v24/Gomoku-v0_pt_v24.py'
 _TRAIN_W = '/Users/kid/AlphaZero_Gomoku_15x15_v24/gomoku_checkpoints_v24/weights_it176_v24.pt'
 
+# 棋谱/题目: 默认复用旧项目那份(读写同一个文件, 避免两套数据分叉), 可用 POSITIONS_FILE 覆盖
+_OLD_POS = '/Users/kid/AlphaZero_Gomoku_15x15_v24/web/positions.json'
+POS_FILE = os.environ.get('POSITIONS_FILE') or (_OLD_POS if os.path.exists(_OLD_POS)
+                                                else os.path.join(HERE, 'positions.json'))
+_POS_LOCK = threading.Lock()
+_POS_BAKED = [False]
+
 V24_PY = os.environ.get('V24_PY') or (_HERE_PY if os.path.exists(_HERE_PY) else _TRAIN_PY)
 V24_W = os.environ.get('V24_W') or (_HERE_W if os.path.exists(_HERE_W) else _TRAIN_W)
 PORT = int(os.environ.get('LAB_PORT', '5055'))
@@ -177,6 +184,15 @@ def _agent_for(path):
 app = Flask(__name__, static_folder=None)
 
 
+@app.errorhandler(Exception)
+def _json_err(e):
+    import traceback
+    traceback.print_exc()
+    from werkzeug.exceptions import HTTPException
+    code = e.code if isinstance(e, HTTPException) else 500
+    return jsonify({'ok': False, 'error': '%s: %s' % (type(e).__name__, e)}), code
+
+
 def _board_from_stones(stones):
     b = np.zeros((N, N), dtype=np.int8)
     for it in stones or []:
@@ -299,6 +315,124 @@ def node_view():
             'q': [round(float(x), 5) for x in q.reshape(-1)],
             'legal': [0 if occ[r, c] else 1 for r in range(N) for c in range(N)],
         })
+
+
+def _load_pos():
+    if not os.path.exists(POS_FILE):
+        return []
+    try:
+        with open(POS_FILE, 'r', encoding='utf-8') as f:
+            d = json.load(f)
+        return d if isinstance(d, list) else []
+    except Exception as e:
+        log('positions 读取失败: %s' % e)
+        return []
+
+
+def _save_pos(items):
+    # 首次写入前留一份 .bak(这份文件属于训练项目, 别让它被一次手误覆盖掉)
+    if not _POS_BAKED[0] and os.path.exists(POS_FILE):
+        try:
+            import shutil
+            shutil.copy2(POS_FILE, POS_FILE + '.bak')
+            _POS_BAKED[0] = True
+            log('已备份 %s → %s.bak' % (POS_FILE, POS_FILE))
+        except Exception as e:
+            log('备份失败(继续): %s' % e)
+    tmp = POS_FILE + '.tmp'
+    with open(tmp, 'w', encoding='utf-8') as f:
+        json.dump(items, f, ensure_ascii=False, indent=1)
+    os.replace(tmp, POS_FILE)
+
+
+def _pos_brief(it):
+    meta = it.get('meta') or {}
+    st = it.get('stones') or []
+    return {
+        'name': it.get('name'), 'tag': it.get('tag') or '', 'created': it.get('created') or '',
+        'n_stones': len(st), 'has_answer': bool(it.get('answer')), 'score': it.get('score'),
+        'winner': meta.get('winner_text'), 'weights': [meta.get('weight_black'), meta.get('weight_white')],
+        'sim': meta.get('sim_count'), 'moves': meta.get('moves'), 'version': meta.get('version'),
+    }
+
+
+@app.route('/api/positions')
+def positions_list():
+    items = _load_pos()
+    q = (request.args.get('q') or '').strip().lower()
+    tag = (request.args.get('tag') or '').strip()
+    ha = request.args.get('has_answer') == '1'
+    out = [_pos_brief(it) for it in reversed(items)]      # 新的在前
+    if q:
+        out = [o for o in out if q in (o['name'] or '').lower() or q in (o['created'] or '')]
+    if tag:
+        out = [o for o in out if (o['tag'] or '') == tag]
+    if ha:
+        out = [o for o in out if o['has_answer']]
+    return jsonify({'ok': True, 'file': POS_FILE, 'total': len(items), 'items': out[:300]})
+
+
+@app.route('/api/positions/get')
+def positions_get():
+    name = request.args.get('name') or ''
+    it = next((x for x in _load_pos() if x.get('name') == name), None)
+    if it is None:
+        return jsonify({'ok': False, 'error': '找不到: %s' % name})
+    return jsonify({'ok': True, 'item': it})
+
+
+@app.route('/api/positions/save', methods=['POST'])
+def positions_save():
+    d = request.get_json(force=True, silent=True) or {}
+    name = (d.get('name') or '').strip()
+    stones = d.get('stones') or []
+    if not name or not stones:
+        return jsonify({'ok': False, 'error': '需要名称和棋子'})
+    def _rcv(s):
+        if isinstance(s, dict):
+            return int(s['r']), int(s['c']), int(s.get('v', 0))
+        return int(s[0]), int(s[1]), int(s[2])
+    stones = [dict(zip('rcv', _rcv(s))) for s in stones if 0 <= _rcv(s)[0] < N and 0 <= _rcv(s)[1] < N]
+
+    def _rc(a):
+        if isinstance(a, dict):
+            return int(a['r']), int(a['c'])
+        return int(a[0]), int(a[1])
+    answer = d.get('answer')
+    if answer:
+        answer = [dict(zip('rc', _rc(a))) for a in answer][:20]
+    score = d.get('score')
+    try:
+        score = None if score is None else max(-1.0, min(1.0, float(score)))
+    except Exception:
+        score = None
+    meta = d.get('meta') if isinstance(d.get('meta'), dict) else None
+    if meta and len(json.dumps(meta, ensure_ascii=False)) > 800:
+        meta = None
+    with _POS_LOCK:
+        items = _load_pos()
+        items = [x for x in items if x.get('name') != name]      # 同名覆盖
+        items.append({'name': name, 'tag': (d.get('tag') or '').strip(), 'stones': stones,
+                      'answer': answer, 'score': score, 'meta': meta,
+                      'created': time.strftime('%Y-%m-%d %H:%M')})
+        _save_pos(items)
+    log('positions 保存 %r (%d 子, tag=%s)' % (name, len(stones), d.get('tag') or ''))
+    return jsonify({'ok': True, 'total': len(items), 'file': POS_FILE})
+
+
+@app.route('/api/positions/delete', methods=['POST'])
+def positions_delete():
+    d = request.get_json(force=True, silent=True) or {}
+    name = d.get('name') or ''
+    with _POS_LOCK:
+        items = _load_pos()
+        before = len(items)
+        items = [x for x in items if x.get('name') != name]
+        if len(items) == before:
+            return jsonify({'ok': False, 'error': '找不到: %s' % name})
+        _save_pos(items)
+    log('positions 删除 %r' % name)
+    return jsonify({'ok': True, 'total': len(items)})
 
 
 @app.route('/api/weights')

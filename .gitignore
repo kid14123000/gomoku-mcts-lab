@@ -11,6 +11,11 @@ __pycache__/
 *.npz
 !weights/weights_it176_v24.pt
 
+# 个人棋谱/题目数据(默认读旧项目那份, 不进库)
+positions.json
+positions.json.bak
+positions.json.tmp
+
 # 系统
 .DS_Store
 Thumbs.db

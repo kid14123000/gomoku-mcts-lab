@@ -62,7 +62,26 @@ LAB_PORT=5055 \
 | 数值与更新公式 | `coef`、`U=coef·P`、`PUCT=Q+U`、`N→N+1, Q←Q+(v−Q)/N` 全部带数 + Q 轨迹折线 |
 | 本轮观察 | 自动统计：先验熵、集中度、先验↔搜索 top5 重合、平均深度、value 饱和率、计数平局、argmaxN vs argmaxQ |
 | 搜索树 | 冰柱图：行=层数，**块宽 ∝ 进入次数 N**，颜色=Q；兄弟块可按 **N / Q / P** 重排；`试过就弃`（N=1 且 Q<0）用红色虚线框标出。点任意块 → 以该节点为根，重绘棋盘/三视角/候选表/公式；顶部显示 `根 → G6 → J4` 路径，`回到根` 复原 |
+| 棋谱 / 题目 | `📁 棋谱` 打开列表（搜索 / 标签 / 有答案过滤），点任一条**直接加载局面并重算**；带 `answer` 的题目会在棋盘上用青色菱形标出推荐点。`💾 保存` 把当前局面存成题目/对弈，可勾选"当前选点记为答案""根 value 记为分数" |
 | 双代并排 | 头部 `⚖ 并排对比` → 选两副权重、同一局面同一 sim，各自 decide；并排看 policy 热力、选点、根 value、候选表 + 差异（选点是否一致 / Δvalue / policy KL / max|ΔP| / 访问 top5 重合） |
+
+## 棋谱 / 题目：和旧看板共用一份数据
+
+默认直接读写旧项目那份 **`/Users/kid/AlphaZero_Gomoku_15x15_v24/web/positions.json`**（单一真相源，
+不用在两个工具之间搬数据），用 `POSITIONS_FILE` 可以指到别处：
+
+```bash
+POSITIONS_FILE=/path/to/positions.json ./run.sh
+```
+
+- 记录格式与原看板完全一致：`{name, tag, stones:[{r,c,v}], answer:[{r,c}], score, meta, created}`
+  → 在 lab 里存的东西**旧看板也能打开**，反之亦然
+- `stones` 的**数组顺序就是落子顺序**（棋盘上的手数），加载时按 `index+1` 还原
+- 列表支持：名称搜索、`tag` 过滤（对弈 / Rapfi测评 / 回放）、`有答案(题目)` 过滤
+- 保存时可勾选：`把当前选点记为答案`（取「选点」模式下选中的点，没选则取本次 decide 的选点）、
+  `把根 value 记为分数`（当前方视角 −1~1）
+- **第一次写入前会自动把原文件备份成 `positions.json.bak`**（这份文件属于训练项目，防手误覆盖）
+- `positions.json` 已进 `.gitignore` —— 个人棋谱不进仓库
 
 ## 一次 search 的内部过程（逐帧）
 
@@ -182,6 +201,10 @@ docs/                         # 截图
   每模拟的路径 `{a:[[r,c],…], v:[逐层v], k:[leaf|node|terminal]}`、根策略、访问数、Q、`tree`、以及 `selfcheck`
 - `POST /api/node` — 传 `{"path":[[r,c],…]}`，重演到树中任意节点，返回**该节点自己的 225 个候选**
   （`policy` / `count` / `q` / `stones` / `n_total`）。叶子节点也能查（有 policy 就够）
+- `GET  /api/positions?q=&tag=&has_answer=1` — 棋谱列表（新→旧）
+- `GET  /api/positions/get?name=` — 单条完整记录
+- `POST /api/positions/save` — `{name,tag,stones[[r,c,v]…],answer[{r,c}…],score,meta}`（同名覆盖）
+- `POST /api/positions/delete` — `{name}`
 - `GET  /api/weights` — 可用权重清单（仓库 `weights/` + 训练目录的 `*.pt`）
 - `POST /api/compare` — 传 `{"stones":…,"sim":…,"weights":[A,B]}`，两副权重各自独立 decide 一次，
   返回各自 `policy/count/q/chosen/v_root/ms`（用独立 agent + `reset_mcts`，不碰主页面的树）

@@ -147,6 +147,13 @@
 </header>
 
 <div id="msg"></div>
+<div class="nodebar" id="posbar" style="background:#0f2437;border-color:#1d4e6e;color:#bae6fd">
+  <span>📖 已打开 <b id="pbName">–</b></span>
+  <span style="color:var(--dim)" id="pbInfo"></span>
+  <span class="spacer"></span>
+  <button onclick="clearAnswer()" id="pbClear" style="display:none">清除答案标注</button>
+</div>
+
 <div class="nodebar" id="nodebar">
   <span>🔍 正在看树节点 <b id="nbPath">–</b></span>
   <span style="color:var(--dim)">N=<b id="nbN">–</b> · 深度 <b id="nbD">–</b> · 这是该节点自己的 225 个候选（静态终态，不能用模拟轴回放）</span>
@@ -194,6 +201,8 @@
     </div>
     <div class="row" style="margin-top:6px">
       <button class="primary" onclick="analyze()" id="btnRun">分析 (decide)</button>
+      <button onclick="openPos()" title="打开之前保存的题目/对局">📁 棋谱</button>
+      <button onclick="openPos(1)" title="把当前局面存成题目/对局">💾 保存</button>
       <button onclick="playSel()" id="btnPlay">落子 = 选中点</button>
       <button onclick="resetTree()" title="清空 MCTS 树 (agent.reset_mcts)">重置树</button>
       <span class="spacer"></span>
@@ -328,6 +337,44 @@
   <canvas id="curve" height="38"></canvas>
 </footer>
 
+<div id="posOv" style="display:none;position:fixed;inset:0;z-index:90;background:#060a12f2;overflow:auto">
+  <div style="max-width:1000px;margin:0 auto;padding:14px 18px 24px">
+    <div class="row" style="margin-bottom:10px">
+      <h1 style="font-size:16px;margin:0">📁 棋谱 / 题目</h1>
+      <span style="font-size:11px;color:var(--dim2)" id="posFile"></span>
+      <span class="spacer"></span>
+      <button onclick="closePos()">关闭</button>
+    </div>
+
+    <div class="card" style="margin-bottom:12px">
+      <h2>保存当前局面 <span class="hint" id="posSaveHint"></span></h2>
+      <div class="row" style="gap:8px">
+        <input id="posName" type="text" placeholder="名称(空=自动)" style="width:230px">
+        <select id="posTagSave" style="width:120px">
+          <option value="">(无标签)</option><option value="题目">题目</option>
+          <option value="对弈">对弈</option><option value="Rapfi测评">Rapfi测评</option><option value="回放">回放</option>
+        </select>
+        <label class="chk"><input type="checkbox" id="posUseAnswer"> 把当前选点记为答案</label>
+        <label class="chk"><input type="checkbox" id="posUseScore"> 把根 value 记为分数</label>
+        <button class="primary" onclick="savePos()">保存</button>
+        <span id="posMsg" style="font-size:11px;color:var(--dim2)"></span>
+      </div>
+    </div>
+
+    <div class="row" style="margin-bottom:8px;gap:8px">
+      <input id="posQ" type="text" placeholder="搜索名称…" style="width:200px" oninput="loadPosList()">
+      <select id="posTag" style="width:130px" onchange="loadPosList()">
+        <option value="">全部</option>
+        <option value="__ans">有答案(题目)</option>
+        <option value="对弈">tag=对弈</option><option value="Rapfi测评">tag=Rapfi测评</option>
+        <option value="回放">tag=回放</option>
+      </select>
+      <span id="posCount" style="font-size:11px;color:var(--dim2)"></span>
+    </div>
+    <div id="posList" style="max-height:60vh;overflow:auto"></div>
+  </div>
+</div>
+
 <div id="cmpOv" style="display:none;position:fixed;inset:0;z-index:80;background:#060a12f2;overflow:auto">
   <div style="max-width:1280px;margin:0 auto;padding:14px 18px 24px">
     <div class="row" style="margin-bottom:10px">
@@ -371,6 +418,7 @@ const S = {
   stones: [], player: 1, mode: 'setup', layer: 'policy',
   sim: 50, k: 0, sel: null, D: null, playing: null, tau: 0, frame: null, frameTimer: null,
   sort: [{ k: 'q', dir: -1 }, { k: 'p', dir: -1 }, { k: 'n', dir: -1 }],  // 默认 Q↓ → P↓ → N↓
+  answer: null, posName: null, posList: [],
 };
 
 const $ = id => document.getElementById(id);
@@ -577,6 +625,23 @@ function drawMain() {
     ctx.beginPath(); ctx.arc(SP + c * SC, SP + r * SC, SC * .52, 0, 7); ctx.stroke();
     ctx.setLineDash([]);
   }
+  // 题目答案标注 (青色菱形 + 优先级序号)
+  if (S.answer && S.answer.length && !S.node) {
+    S.answer.forEach((a, k) => {
+      const x = SP + a.c * SC, y = SP + a.r * SC, r0 = SC * .30;
+      ctx.beginPath();
+      ctx.moveTo(x, y - r0); ctx.lineTo(x + r0, y); ctx.lineTo(x, y + r0); ctx.lineTo(x - r0, y);
+      ctx.closePath();
+      ctx.fillStyle = 'rgba(34,211,238,.85)'; ctx.fill();
+      ctx.strokeStyle = '#0e7490'; ctx.lineWidth = 1.2; ctx.stroke();
+      if (S.answer.length > 1) {
+        ctx.fillStyle = '#082f49'; ctx.font = 'bold 9px sans-serif';
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText(k + 1, x, y + .5);
+      }
+    });
+  }
+
   // 选中
   if (S.sel) {
     const [r, c] = S.sel;
@@ -1327,6 +1392,126 @@ async function runCmp() {
   finally { $('cmpBtn').disabled = false; }
 }
 
+
+/* ══════════════════════════════════════════════════════════════════
+   棋谱 / 题目 (读写旧项目同一份 positions.json)
+   ══════════════════════════════════════════════════════════════════ */
+const TAG_COLOR = { '对弈': '#34d399', '题目': '#fbbf24', 'Rapfi测评': '#f97316', '回放': '#38bdf8' };
+
+function openPos(saveMode) {
+  $('posOv').style.display = 'block';
+  $('posSaveHint').textContent = S.D ? `当前局面 ${S.stones.length} 子 · sim ${S.sim} · 选中 ${S.sel ? coord(S.sel[0], S.sel[1]) : '无'}`
+                                    : `当前局面 ${S.stones.length} 子（还没分析）`;
+  loadPosList();
+  if (saveMode) setTimeout(() => $('posName').focus(), 100);
+}
+function closePos() { $('posOv').style.display = 'none'; }
+
+async function loadPosList() {
+  const q = $('posQ').value.trim(), tag = $('posTag').value;
+  const isAns = tag === '__ans';
+  const url = '/api/positions?q=' + encodeURIComponent(q)
+    + '&tag=' + encodeURIComponent(isAns ? '' : tag) + (isAns ? '&has_answer=1' : '');
+  try {
+    const j = await (await fetch(url)).json();
+    $('posFile').textContent = j.file || '';
+    $('posCount').textContent = `${j.items.length} / ${j.total} 条`;
+    S.posList = j.items;
+    $('posList').innerHTML = j.items.map((it, i) => {
+      const col = TAG_COLOR[it.tag] || '#64748b';
+      return `<div class="row" style="padding:5px 8px;border-bottom:1px solid #1b2740;gap:8px;align-items:center">
+        <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+              title="${it.name}">${it.name}</span>
+        ${it.tag ? `<span style="font-size:10px;border:1px solid ${col};color:${col};border-radius:4px;padding:0 5px">${it.tag}</span>` : ''}
+        ${it.has_answer ? '<span style="font-size:10px;color:var(--amber)">有答案</span>' : ''}
+        ${it.score !== null && it.score !== undefined ? `<span style="font-size:10px;color:var(--dim2)">标注 ${it.score}</span>` : ''}
+        <span style="font-size:11px;color:var(--dim2);min-width:52px;text-align:right">${it.n_stones} 子</span>
+        <span style="font-size:11px;color:var(--dim2);min-width:104px">${it.created || ''}</span>
+        <span style="font-size:11px;color:var(--dim);min-width:90px">${it.winner || ''}</span>
+        <button class="mini2" onclick="openPosItem(${i})">打开</button>
+        <button class="mini2" onclick="delPosItem(${i})" style="color:#fca5a5;border-color:#7f1d1d">删</button>
+      </div>`;
+    }).join('') || '<div style="padding:12px;color:var(--dim2)">没有匹配的记录</div>';
+  } catch (e) { $('posCount').textContent = '读取失败: ' + e; }
+}
+
+async function openPosItem(i) {
+  const brief = S.posList[i];
+  try {
+    const j = await (await fetch('/api/positions/get?name=' + encodeURIComponent(brief.name))).json();
+    if (!j.ok) { $('posMsg').textContent = j.error; return; }
+    const it = j.item;
+    S.stones = it.stones.map((s, k) => ({ r: s.r, c: s.c, v: s.v, n: k + 1 }));
+    const nb = S.stones.filter(s => s.v === 1).length, nw = S.stones.length - nb;
+    S.player = nb === nw ? 1 : -1;
+    $('selPlayer').value = String(S.player);
+    S.answer = it.answer || null;
+    S.posName = it.name;
+    S.sel = null; S.node = null; S.nodeStones = null; S.frame = null; S.D = null; S.k = 0;
+    closePos(); updatePosBar();
+    analyze();                       // 打开即按当前 sim 重算
+  } catch (e) { $('posMsg').textContent = '打开失败: ' + e; }
+}
+
+async function delPosItem(i) {
+  const name = S.posList[i].name;
+  if (!confirm('删除「' + name + '」？(会写回 positions.json)')) return;
+  try {
+    const j = await (await fetch('/api/positions/delete', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }),
+    })).json();
+    if (!j.ok) { $('posMsg').textContent = j.error; return; }
+    if (S.posName === name) { S.posName = null; updatePosBar(); }
+    loadPosList();
+  } catch (e) { $('posMsg').textContent = '删除失败: ' + e; }
+}
+
+async function savePos() {
+  if (!S.stones.length) { $('posMsg').textContent = '先摆个局面'; return; }
+  const d = new Date();
+  const auto = '手动_' + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0')
+    + '-' + String(d.getHours()).padStart(2, '0') + String(d.getMinutes()).padStart(2, '0');
+  const name = $('posName').value.trim() || auto;
+  const tag = $('posTagSave').value;
+  let answer = S.answer;
+  if ($('posUseAnswer').checked) {
+    const p = S.sel || (S.D ? S.D.chosen : null);
+    answer = p ? [{ r: p[0], c: p[1] }] : answer;
+  }
+  let score = null;
+  if ($('posUseScore').checked && S.D && !S.node) score = S.D.root.v_raw;
+  const meta = {
+    weight_black: S.D ? 'v24|' + $('hWeight').textContent : null,
+    sim_count: S.sim, version: 'v24', moves: S.stones.length,
+    winner: null, winner_text: '未终局',
+    saved_at: d.toLocaleString('sv-SE'),
+  };
+  try {
+    const j = await (await fetch('/api/positions/save', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, tag, stones: S.stones.map(s => [s.r, s.c, s.v]), answer, score, meta }),
+    })).json();
+    if (!j.ok) { $('posMsg').textContent = j.error; return; }
+    S.posName = name; updatePosBar();
+    $('posMsg').textContent = `已保存「${name}」· 共 ${j.total} 条`;
+    $('posName').value = '';
+    loadPosList();
+  } catch (e) { $('posMsg').textContent = '保存失败: ' + e; }
+}
+
+function updatePosBar() {
+  const bar = $('posbar');
+  if (!S.posName) { bar.classList.remove('on'); return; }
+  bar.classList.add('on');
+  $('pbName').textContent = S.posName;
+  const ans = S.answer && S.answer.length
+    ? ' · 答案 ' + S.answer.map((a, i) => `${i + 1}.${coord(a.r, a.c)}`).join(' ')
+    : '';
+  $('pbInfo').textContent = `${S.stones.length} 子${ans}`;
+  $('pbClear').style.display = (S.answer && S.answer.length) ? '' : 'none';
+}
+function clearAnswer() { S.answer = null; updatePosBar(); renderAll(); }
+
 /* 曲线: ΣN 随模拟 */
 function drawCurve() {
   const cv = $('curve'); if (!cv) return;
@@ -1359,7 +1544,7 @@ function drawCurve() {
    ══════════════════════════════════════════════════════════════════ */
 function renderAll() {
   drawMain(); drawMini('cPolicy', 'policy'); drawMini('cVisit', 'visits'); drawMini('cQ', 'q');
-  renderCand(); renderFormula(); renderSim(); renderObs(); renderOut(); drawCurve(); renderTree();
+  renderCand(); renderFormula(); renderSim(); renderObs(); renderOut(); drawCurve(); renderTree(); updatePosBar();
   if (zoomOn) drawZoom(S.zoomKind || 'policy');
   if (S.node) {
     $('kLabel').textContent = '节点视图（不可回放）';
@@ -1414,6 +1599,7 @@ function undo() {
 }
 function clearBoard() {
   S.stones = []; S.player = 1; S.sel = null; S.D = null; S.k = 0;
+  S.answer = null; S.posName = null; updatePosBar();
   $('selPlayer').value = '1'; renderAll();
   fetch('/api/reset', { method: 'POST' });
 }
