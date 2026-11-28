@@ -784,6 +784,9 @@ function toggleSort(k, add) {
   renderCand();
 }
 function renderCand() {
+  // 注意: 'sortChain' 这个元素在页面里已不存在(排序链换成了 chips)。
+  // 这里必须判空 —— 之前直接 .textContent 会在「无分析结果」时抛 TypeError,
+  // 而 renderAll 是先调 renderCand 的, 一抛就中断后面的热力图/树/面板刷新。
   if (!S.D) { $('candBody').innerHTML = ''; const sc0 = $('sortChain'); if (sc0) sc0.textContent = ''; return; }
   const st = stateAt(S.k);
   const prv = (!S.node && S.k > 0) ? stateAt(S.k - 1) : null;
