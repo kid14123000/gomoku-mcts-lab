@@ -38,7 +38,7 @@ _TRAIN_PY = os.path.expanduser('~/AlphaZero_Gomoku_15x15_v24/Gomoku-v0_pt_v24.py
 # 注意: 默认权重必须与仓库那份同一条训练线(v24c_run1)。旧的 gomoku_checkpoints_v24/ 是另一条线,
 # 同名文件内容不同(实测 it140 两处 tensor 签名不同), 指错会静默换掉整条训练线的基线。
 _TRAIN_W = os.path.expanduser(
-    '~/AlphaZero_Gomoku_15x15_v24/gomoku_checkpoints_v24_v24c_run1/weights_it140_v24.pt')
+    '~/AlphaZero_Gomoku_15x15_v24/gomoku_checkpoints_v24/weights_it140_v24.pt')
 
 # 棋谱/题目: 默认复用旧项目那份(读写同一个文件, 避免两套数据分叉), 可用 POSITIONS_FILE 覆盖
 _OLD_POS = os.path.expanduser('~/AlphaZero_Gomoku_15x15_v24/web/positions.json')
