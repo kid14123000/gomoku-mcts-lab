@@ -196,16 +196,47 @@ def _json_err(e):
     return jsonify({'ok': False, 'error': '%s: %s' % (type(e).__name__, e)}), code
 
 
-def _board_from_stones(stones):
-    b = np.zeros((N, N), dtype=np.int8)
+def _stones_rcv(stones):
+    """stones 统一成 [[r,c,v],...]：同时接受 [[r,c,v]] 与 [{r,c,v}]
+    （前端发列表、positions.json 存字典 —— 之前 /api/analyze 只认列表，传字典直接 500）"""
+    out = []
     for it in stones or []:
         try:
             r, c, v = int(it[0]), int(it[1]), int(it[2])
         except Exception:
             r, c, v = int(it['r']), int(it['c']), int(it['v'])
         if 0 <= r < N and 0 <= c < N:
-            b[r, c] = v
+            out.append([r, c, v])
+    return out
+
+
+def _board_from_stones(stones):
+    b = np.zeros((N, N), dtype=np.int8)
+    for r, c, v in _stones_rcv(stones):
+        b[r, c] = v
     return b
+
+
+def _resolve_last_move(d, stones):
+    """4 通道契约的 ch3（上一步位置）解析。
+
+    v24 的输入是 (4,15,15)：ch0 当前玩家 / ch1 对手 / ch2 恒 1.0 / ch3 上一步。
+    训练自对弈每一步都会填 ch3，只有开局那一手是全 0 —— 所以有子的局面若传 None，
+    等于把网络推到一个分布外的输入上。实测同一局面同样 800 次模拟：
+      ch3 = 最后一子 → it176 选 K11，N=375 (46.9%)
+      ch3 = 全 0      → it176 选 K11，N=161 (20.2%)   ← 差 2.3 倍
+    因此调用方漏传时按 stones[-1] 兜底，并把这个事实回传给前端。
+    """
+    lm = d.get('last_move')
+    if lm is not None:
+        return [int(lm[0]), int(lm[1])], 'request'
+    if stones:
+        it = stones[-1]
+        try:
+            return [int(it[0]), int(it[1])], 'auto(stones[-1])'
+        except Exception:
+            return [int(it['r']), int(it['c'])], 'auto(stones[-1])'
+    return None, 'empty-board'
 
 
 def _five_in_row(b):
@@ -466,10 +497,10 @@ def compare():
     b = _board_from_stones(stones)
     nb, nw = int((b == 1).sum()), int((b == -1).sum())
     player = int(d.get('player') or (1 if nb == nw else -1))
-    lm = d.get('last_move')
+    lm, lm_src = _resolve_last_move(d, stones)
     # ⚠️ decide 内部会再包一层 np.array([last_move]) → 这里必须给 1 维 (2,), 给 (1,2) 会变 3 维
-    lm_dec = np.array(lm) if lm else None
-    lm_pred = np.array([lm]) if lm else None
+    lm_dec = np.array(lm) if lm is not None else None
+    lm_pred = np.array([lm]) if lm is not None else None
     canon = (player * b).astype(np.int8)
     out = []
     with LOCK:
@@ -500,7 +531,7 @@ def compare():
             })
     log('compare %s sim=%d -> %s' % ([o['name'] for o in out], sim,
                                      [o['chosen'] for o in out]))
-    return jsonify({'ok': True, 'player': player, 'sim': sim, 'items': out})
+    return jsonify({'ok': True, 'player': player, 'sim': sim, 'last_move': lm, 'lm_source': lm_src, 'items': out})
 
 
 @app.route('/api/status')
@@ -547,7 +578,7 @@ def analyze():
     nb = int((b == 1).sum())
     nw = int((b == -1).sum())
     player = int(d.get('player') or (1 if nb == nw else -1))
-    last_move = d.get('last_move')
+    last_move, lm_src = _resolve_last_move(d, stones)
 
     with LOCK:
         if not reuse:
@@ -575,7 +606,7 @@ def analyze():
         pi_show = pi_raw * legal
         pi_show = pi_show / pi_show.sum() if pi_show.sum() > 0 else legal / legal.sum()
 
-        ROOT_STATE['stones'] = [list(map(int, st)) for st in stones]
+        ROOT_STATE['stones'] = _stones_rcv(stones)
         ROOT_STATE['player'] = player
         if seed is not None:
             np.random.seed(int(seed))
@@ -636,6 +667,8 @@ def analyze():
             'sim': sim,
             'noise': noise,
             'tau': tau,
+            'last_move': last_move,
+            'lm_source': lm_src,          # request / auto(stones[-1]) / empty-board
             'chosen': [int(loc[0]), int(loc[1])],
             'prob': [round(float(x), 6) for x in prob.reshape(-1)],
             'policy_raw': [round(float(x), 6) for x in pi_show.reshape(-1)],
@@ -662,9 +695,9 @@ def analyze():
             'c': {'c_init': AGENT.c_init, 'c_base': AGENT.c_base,
                   'eps': AGENT.prior_exploration_fraction, 'alpha': mod.DIRICHLET_ALPHA},
         }
-    log('analyze stones=%d player=%+d sim=%d noise=%s reuse=%s -> %s  %dms (%.1f/sim) selfcheck=%s'
-        % (len(stones), player, sim, noise, reuse, out['chosen'], out['ms'], out['ms_per_sim'],
-           selfcheck))
+    log('analyze stones=%d player=%+d sim=%d noise=%s reuse=%s ch3=%s(%s) -> %s  %dms (%.1f/sim) selfcheck=%s'
+        % (len(stones), player, sim, noise, reuse, last_move, lm_src, out['chosen'],
+           out['ms'], out['ms_per_sim'], selfcheck))
     return jsonify(out)
 
 
