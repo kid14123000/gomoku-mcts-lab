@@ -179,6 +179,15 @@
     <h2>主棋盘
       <span class="hint">左键摆谱/选点 · 右键删子 · 数字=落子顺序</span>
     </h2>
+    <div class="row" style="margin-bottom:6px" id="plyRow">
+      <span style="color:var(--dim2);font-size:11px">棋谱</span>
+      <button onclick="plyTo(0)" title="初始局面 (Home)">⏮</button>
+      <button onclick="plyStep(-1)" title="后退一手 (←)">◀ 后退</button>
+      <span id="plyInfo" style="font-variant-numeric:tabular-nums;font-size:12.5px;min-width:104px;text-align:center;color:var(--fg)">– / –</span>
+      <button onclick="plyStep(1)" title="前进一手 (→)">前进 ▶</button>
+      <button onclick="plyTo(S.stones.length)" title="终盘 (End)">⏭</button>
+      <span style="color:var(--dim2);font-size:11px" id="plyHint"></span>
+    </div>
     <canvas id="board" width="500" height="500"></canvas>
     <div class="row" style="margin-top:8px">
       <button id="mSetup" class="on" onclick="setMode('setup')">摆谱</button>
@@ -438,6 +447,7 @@ const N = 15, SZ = 500, SP = 30, SC = (SZ - 2 * SP) / (N - 1);
 const LETTERS = 'ABCDEFGHIJKLMNO';
 const S = {
   stones: [], player: 1, mode: 'setup', layer: 'policy',
+  ply: 0,                       // 棋谱游标: 看到第几手 (0=空盘, stones.length=终盘)
   sim: 50, k: 0, sel: null, D: null, playing: null, tau: 0, frame: null, frameTimer: null,
   sort: [{ k: 'q', dir: -1 }, { k: 'p', dir: -1 }, { k: 'n', dir: -1 }],  // 默认 Q↓ → P↓ → N↓
   answer: null, posName: null, posList: [],
@@ -447,7 +457,8 @@ const $ = id => document.getElementById(id);
 
 // 当前视图数据源: 根局面(S.D) 或 树节点(S.node)。节点视图是静态终态, 没有逐次模拟轨迹。
 const polArr = () => S.node ? S.node.policy : (S.D ? S.D.policy_now : null);
-const viewStones = () => S.node ? S.nodeStones : S.stones;
+const viewStones = () => S.node ? S.nodeStones : S.stones.slice(0, S.ply);
+const curStones  = () => S.stones.slice(0, S.ply);     // 分析用的局面 = 游标之前的子
 const coord = (r, c) => LETTERS[c] + (N - r);
 const msg = t => { const m = $('msg'); m.textContent = t; m.style.display = t ? 'block' : 'none'; };
 
@@ -773,7 +784,7 @@ function toggleSort(k, add) {
   renderCand();
 }
 function renderCand() {
-  if (!S.D) { $('candBody').innerHTML = ''; $('sortChain').textContent = ''; return; }
+  if (!S.D) { $('candBody').innerHTML = ''; const sc0 = $('sortChain'); if (sc0) sc0.textContent = ''; return; }
   const st = stateAt(S.k);
   const prv = (!S.node && S.k > 0) ? stateAt(S.k - 1) : null;
   const a0 = (!S.node && S.k > 0 && S.D.sims[S.k - 1]) ? S.D.sims[S.k - 1].a[0] : null;
@@ -1464,6 +1475,7 @@ async function openPosItem(i) {
     if (!j.ok) { $('posMsg').textContent = j.error; return; }
     const it = j.item;
     S.stones = it.stones.map((s, k) => ({ r: s.r, c: s.c, v: s.v, n: k + 1 }));
+    S.ply = S.stones.length;               // 打开棋谱默认停在终盘
     const nb = S.stones.filter(s => s.v === 1).length, nw = S.stones.length - nb;
     S.player = nb === nw ? 1 : -1;
     $('selPlayer').value = String(S.player);
@@ -1784,7 +1796,7 @@ function drawCurve() {
 function renderAll() {
   drawMain(); drawMini('cPolicy', 'policy'); drawMini('cVisit', 'visits'); drawMini('cQ', 'q');
   renderCand(); renderFormula(); renderSim(); renderObs(); renderOut(); drawCurve(); renderTree();
-  renderPathCurves(); updatePosBar();
+  renderPathCurves(); updatePosBar(); updatePlyBar();
   if (zoomOn) drawZoom(S.zoomKind || 'policy');
   if (S.node) {
     $('kLabel').textContent = '节点视图（不可回放）';
@@ -1829,16 +1841,52 @@ function togglePlay() {
 }
 function pick(r, c) { S.sel = [r, c]; renderAll(); }
 function syncPlayer() {
-  const nb = S.stones.filter(s => s.v === 1).length, nw = S.stones.length - nb;
+  const st = curStones();
+  const nb = st.filter(s => s.v === 1).length, nw = st.length - nb;
   if ($('autoAlt').checked && S.mode === 'setup') S.player = nb === nw ? 1 : -1;
   $('selPlayer').value = String(S.player);
 }
+/* ── 棋谱步进 ─────────────────────────────────────────────────────
+   S.stones = 完整棋谱(带落子顺序), S.ply = 看到第几手。
+   步进只改游标、不重跑搜索; 一旦游标≠原分析位置, S.D 作废(必须在当前局面上重新分析才有效),
+   这样看到的热力图/树不会和棋盘对不上。 */
+function plyInfoText() {
+  if (!S.stones.length) return '空盘';
+  const last = S.stones[S.ply - 1];
+  const who = last ? (last.v === 1 ? '黑' : '白') : '';
+  return `${S.ply} / ${S.stones.length}${last ? '  ' + who + coord(last.r, last.c) : ''}`;
+}
+function updatePlyBar() {
+  const el = $('plyInfo'); if (!el) return;
+  el.textContent = plyInfoText();
+  const hint = $('plyHint');
+  if (hint) hint.textContent = (S.ply < S.stones.length) ? '（前方有棋，分析会截到当前手）' : '';
+}
+function plyTo(n) {
+  const m = Math.max(0, Math.min(S.stones.length, n | 0));
+  if (m === S.ply) { updatePlyBar(); return; }
+  if (S.D) { S.D = null; S.k = 0; $('hCheck').className = 'badge'; $('hCheck').textContent = '回放自检 –'; }
+  S.ply = m; S.sel = null; S.node = null; S.nodeStones = null; S.frame = null;
+  updateNodeBar(); syncPlayer(); renderAll(); updatePlyBar();
+  if (S.stones.length && m < S.stones.length) msg(`已退到第 ${m} 手（共 ${S.stones.length} 手），点「分析」重算这一手`);
+}
+function plyStep(d) { plyTo(S.ply + d); }
+document.addEventListener('keydown', e => {
+  const t = e.target;
+  if (t && (t.tagName === 'INPUT' || t.tagName === 'SELECT' || t.tagName === 'TEXTAREA')) return;
+  if (!S.stones.length) return;
+  if (e.key === 'ArrowLeft')  { plyStep(-1); e.preventDefault(); }
+  else if (e.key === 'ArrowRight') { plyStep(1); e.preventDefault(); }
+  else if (e.key === 'Home')  { plyTo(0); e.preventDefault(); }
+  else if (e.key === 'End')   { plyTo(S.stones.length); e.preventDefault(); }
+});
+
 function undo() {
   if (!S.stones.length) return;
-  S.stones.pop(); syncPlayer(); S.sel = null; analyze(true);
+  S.stones.pop(); S.ply = Math.min(S.ply, S.stones.length); syncPlayer(); S.sel = null; analyze(true);
 }
 function clearBoard() {
-  S.stones = []; S.player = 1; S.sel = null; S.D = null; S.k = 0;
+  S.stones = []; S.ply = 0; S.player = 1; S.sel = null; S.D = null; S.k = 0;
   S.answer = null; S.posName = null; updatePosBar();
   $('selPlayer').value = '1'; renderAll();
   fetch('/api/reset', { method: 'POST' });
@@ -1848,16 +1896,25 @@ $('board').addEventListener('contextmenu', e => {
   e.preventDefault();
   const { r, c } = hit(e);
   if (r < 0) return;
-  const i = S.stones.findIndex(s => s.r === r && s.c === c);
-  if (i >= 0) { S.stones.splice(i, 1); S.stones.forEach((s, j) => s.n = j + 1); syncPlayer(); analyze(true); }
+  const i = S.stones.findIndex(s => s.r === r && s.c === c && S.stones.indexOf(s) < S.ply);
+  if (i >= 0) {
+    S.stones.splice(i, 1); S.stones.forEach((s, j) => s.n = j + 1);
+    S.ply = Math.min(S.ply, S.stones.length);
+    syncPlayer(); analyze(true);
+  }
 });
 $('board').addEventListener('click', e => {
   const { r, c } = hit(e);
   if (r < 0) return;
-  const occ = S.stones.find(s => s.r === r && s.c === c);
+  const occ = viewStones().find(s => s.r === r && s.c === c);
   if (S.mode === 'pick') { if (!occ) pick(r, c); return; }
   if (occ) { pick(r, c); return; }
+  if (S.ply < S.stones.length) {          // 在回放中途落子 = 从这里分叉, 丢掉后面的棋谱
+    S.stones = S.stones.slice(0, S.ply);
+    S.stones.forEach((s, j) => s.n = j + 1);
+  }
   S.stones.push({ r, c, v: S.player, n: S.stones.length + 1 });
+  S.ply = S.stones.length;
   syncPlayer();
   if (S.D) analyze(); else renderAll();
 });
@@ -1875,8 +1932,9 @@ function hit(e) {
 async function analyze(silent) {
   msg('');
   $('btnRun').disabled = true; $('btnRun').textContent = '搜索中…';
+  const cur = curStones();
   const body = {
-    stones: S.stones.map(s => [s.r, s.c, s.v]),
+    stones: cur.map(s => [s.r, s.c, s.v]),
     player: S.player, sim: S.sim,
     noise: $('chkNoise').checked, reuse: $('chkReuse').checked,
     tau: parseFloat($('tauInput').value) || 0,
@@ -1884,12 +1942,18 @@ async function analyze(silent) {
     c_base: parseFloat($('pCbase').value) || 19652,
     eps: parseFloat($('pEps').value) || 0.25,
     alpha: parseFloat($('pAlpha').value) || 0.03,
-    last_move: S.stones.length ? [S.stones[S.stones.length - 1].r, S.stones[S.stones.length - 1].c] : null,
+    last_move: cur.length ? [cur[cur.length - 1].r, cur[cur.length - 1].c] : null,
   };
   try {
     const r = await fetch('/api/analyze', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     const D = await r.json();
     if (!D.ok) { msg(D.error || '分析失败'); return; }
+    if (D.terminal) {                       // 终局局面: 可回放, 不搜索
+      S.D = null; S.k = 0; S.node = null; S.nodeStones = null; S.sel = D.chosen || null;
+      $('hCheck').className = 'badge'; $('hCheck').textContent = '终局 · 不搜索';
+      $('hTime').textContent = '—';
+      renderAll(); msg(D.msg || '终局局面'); return;
+    }
     S.D = D; S.k = D.sims.length; S.tau = body.tau; S.frame = null; S._curveKey = null;
     S.node = null; S.nodeStones = null; updateNodeBar();
     if (!S.sel || S.stones.some(s => s.r === S.sel[0] && s.c === S.sel[1])) S.sel = D.chosen;
@@ -1905,8 +1969,12 @@ async function analyze(silent) {
 function playSel() {
   if (!S.sel) { msg('先在「选点」模式点一个空点，或点候选行'); return; }
   const [r, c] = S.sel;
-  if (S.stones.some(s => s.r === r && s.c === c)) { msg('该点已有子'); return; }
+  if (viewStones().some(s => s.r === r && s.c === c)) { msg('该点已有子'); return; }
+  if (S.ply < S.stones.length) {
+    S.stones = S.stones.slice(0, S.ply); S.stones.forEach((s, j) => s.n = j + 1);
+  }
   S.stones.push({ r, c, v: S.player, n: S.stones.length + 1 });
+  S.ply = S.stones.length;
   S.player = -S.player; $('selPlayer').value = String(S.player);
   S.sel = null;
   analyze();

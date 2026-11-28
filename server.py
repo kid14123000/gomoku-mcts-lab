@@ -495,6 +495,11 @@ def compare():
     if len(paths) < 2:
         return jsonify({'ok': False, 'error': '至少选两副权重'})
     b = _board_from_stones(stones)
+    w5c = _five_in_row(b)
+    if w5c:
+        return jsonify({'ok': True, 'terminal': True, 'winner': int(w5c), 'n_stones': len(stones),
+                        'msg': '终局局面（%s五连），不参与对比；退到胜负前一手再比'
+                               % ('黑' if w5c == 1 else '白')})
     nb, nw = int((b == 1).sum()), int((b == -1).sum())
     player = int(d.get('player') or (1 if nb == nw else -1))
     lm, lm_src = _resolve_last_move(d, stones)
@@ -571,14 +576,23 @@ def analyze():
     seed = d.get('seed')
 
     b = _board_from_stones(stones)
-    w5 = _five_in_row(b)
-    if w5:
-        return jsonify({'ok': False, 'error': '该局面已有五连(%s胜)，无搜索意义' % ('黑' if w5 == 1 else '白')})
 
     nb = int((b == 1).sum())
     nw = int((b == -1).sum())
     player = int(d.get('player') or (1 if nb == nw else -1))
     last_move, lm_src = _resolve_last_move(d, stones)
+
+    # 已经分出胜负的局面: 允许加载/回放, 但不跑搜索
+    # (root 已是 terminal, search 会立刻返回 winner, count 全 0 → prob 0/0, 拿不到有意义的结果)
+    w5 = _five_in_row(b)
+    if w5:
+        win = int(w5)
+        return jsonify({
+            'ok': True, 'terminal': True, 'winner': win, 'player': player,
+            'last_move': last_move, 'lm_source': lm_src, 'n_stones': len(stones),
+            'msg': '终局：%s五连（第 %d 手）· 回放模式，退到胜负前一手就能分析'
+                   % ('黑' if win == 1 else '白', len(stones)),
+        })
 
     with LOCK:
         if not reuse:
