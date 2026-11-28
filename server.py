@@ -33,9 +33,12 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 
 # 优先用仓库自带副本(克隆即可跑); 找不到再回落到本机训练目录(~ 展开, 不写死用户名)
 _HERE_PY = os.path.join(HERE, 'vendor', 'Gomoku-v0_pt_v24.py')
-_HERE_W = os.path.join(HERE, 'weights', 'weights_it176_v24.pt')
+_HERE_W = os.path.join(HERE, 'weights', 'weights_it140_v24.pt')
 _TRAIN_PY = os.path.expanduser('~/AlphaZero_Gomoku_15x15_v24/Gomoku-v0_pt_v24.py')
-_TRAIN_W = os.path.expanduser('~/AlphaZero_Gomoku_15x15_v24/gomoku_checkpoints_v24/weights_it176_v24.pt')
+# 注意: 默认权重必须与仓库那份同一条训练线(v24c_run1)。旧的 gomoku_checkpoints_v24/ 是另一条线,
+# 同名文件内容不同(实测 it140 两处 tensor 签名不同), 指错会静默换掉整条训练线的基线。
+_TRAIN_W = os.path.expanduser(
+    '~/AlphaZero_Gomoku_15x15_v24/gomoku_checkpoints_v24_v24c_run1/weights_it140_v24.pt')
 
 # 棋谱/题目: 默认复用旧项目那份(读写同一个文件, 避免两套数据分叉), 可用 POSITIONS_FILE 覆盖
 _OLD_POS = os.path.expanduser('~/AlphaZero_Gomoku_15x15_v24/web/positions.json')
